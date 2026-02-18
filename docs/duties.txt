@@ -1,0 +1,99 @@
+Understood. Treat them as a bench of specialists, not a “council.” You win by giving each one a narrow contract and forcing deterministic handoffs.
+
+Role map (what each is best at, operationally)
+
+* DeepSeek: high-throughput code generation + refactors + test scaffolds. Use for “produce code artifacts fast, then we verify.”
+* Claude: long-context architecture, spec writing, edge cases, invariants, and threat modeling. Use for “design + safety rails.”
+* Perplexity: web-backed fact retrieval and source comparison. Use only for “what’s true right now,” then you freeze it into your own notes.
+* LMArena: model selection / A-B testing. Use for “which model handles THIS task class best,” not for production logic.
+
+Operating model (so they don’t contradict each other)
+One orchestrator (you) owns the truth. Everyone else produces “patches” that must pass a gate.
+
+Gate rules:
+
+1. A claim without a citation (Perplexity) is treated as non-factual.
+2. A code patch without tests is treated as a draft.
+3. A spec without invariants is incomplete.
+4. Any contradiction triggers a “reconcile pass” where the output must be reduced to a single, checkable statement.
+
+Here are full copy/paste scripts you can use immediately.
+
+SCRIPT 1 — Project charter prompt (send to Claude)
+
+```
+You are the Architecture Lead. Produce a 1–2 page spec for a “Compatible Companion” system that is LOCAL-FIRST and PORTABLE.
+
+Constraints:
+- Must support: capsule export/import, deterministic agent runtime contract (PLAN→ACT→VERIFY→COMMIT), memory as data (schemas/provenance/TTL/conflict), typed tool gateway, replayable receipts, rollback.
+- Target runtime: Python (unless you strongly justify Node).
+- Must define: component diagram, data model (capsule format), invariants, threat model, and a minimal MVP milestone list.
+
+Output format:
+A) Overview
+B) Components (with responsibilities)
+C) Capsule format (fields + example JSON)
+D) Memory model (tables/collections + lifecycle)
+E) Runtime contract (state machine + receipts)
+F) Invariants (numbered, testable)
+G) Threat model (top 10)
+H) MVP (week 1 deliverables)
+```
+
+SCRIPT 2 — Implementation prompt (send to DeepSeek)
+
+```
+You are the Implementation Lead. Based on the following spec (I will paste it after this message), generate a minimal runnable skeleton in Python as a 3–5 file project.
+
+Must include:
+- capsule.py: create/export/import capsule (JSON), with signing stub (ed25519 placeholder ok)
+- memory.py: memory store interface + simple sqlite implementation (facts + events + provenance + TTL field)
+- tools.py: typed tool registry + receipt logging (JSONL)
+- runtime.py: state machine (PLAN→ACT→VERIFY→COMMIT) with deterministic transcript + rollback using snapshots
+- tests/test_mvp.py: at least 5 tests validating invariants
+
+Rules:
+- No external network calls.
+- Deterministic outputs (seeded RNG if needed).
+- Use standard library only unless absolutely necessary (then justify).
+Return the full code for all files.
+```
+
+SCRIPT 3 — Web truth freezing prompt (send to Perplexity)
+
+```
+Task: Find current, primary-source info on:
+1) Letta/MemGPT status (project direction, deprecations, migrations)
+2) Any public “agent memory” frameworks and their export/import story
+3) Any standard formats for portable agent state (if any)
+
+Requirements:
+- Provide sources with dates.
+- Compare conflicting claims.
+- Output: a short brief + a “frozen facts” list (each fact: statement, source URL, date, confidence).
+No speculation.
+```
+
+SCRIPT 4 — Model tournament harness prompt (for LMArena or your own A/B tests)
+
+```
+Goal: Identify the best model for each task class:
+A) Spec + invariants
+B) Python skeleton generation
+C) Debugging failing tests
+D) Summarizing contradictions across agents
+
+For each task class:
+- Provide 3 evaluation prompts
+- Provide scoring rubric (correctness, determinism, completeness, hallucination rate)
+- Recommend top 2 models and why
+```
+
+Decision you should lock right now (so the team can’t drift)
+
+* Single source of truth repo: `companion/`
+* Canonical artifacts: `SPEC.md`, `capsule.schema.json`, `invariants.md`, `receipts/`, `tests/`
+* “No merge without invariants + tests.”
+
+If you want, I’ll take your “compatible companion” note and turn it into the first `SPEC.md` plus the exact invariant list you’ll enforce in tests (the thing that prevents the usual contradictions spiral).
+

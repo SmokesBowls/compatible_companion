@@ -1,0 +1,565 @@
+Below are the full initial artifacts you can drop into your new repo as-is. They are designed to prevent “contradictions spiral” by locking a deterministic contract (state machine + receipts) and testable invariants up front.
+
+Create files:
+
+* `SPEC.md`
+* `invariants.md`
+* `capsule.schema.json`
+
+---
+
+```markdown
+# SPEC.md
+
+Title: Compatible Companion (Local-First, Portable Agent Runtime)
+Version: 0.1.0
+Status: Draft (Implementable)
+Owner: Orchestrator (you)
+Scope: Define the deterministic runtime contract, capsule portability format, memory model, tool gateway, and verification/rollback mechanics.
+
+## 1. Goals
+
+1) Local-first operation (no required network).
+2) Portability: export/import a “capsule” that carries identity, policies, skills manifest, and pointers or embedded memory units.
+3) Deterministic runtime contract: PLAN → ACT → VERIFY → COMMIT, producing replayable receipts and snapshots.
+4) Memory as data: explicit schemas, provenance, TTL, conflict handling. LLM text is not the primary source of truth.
+5) Tool discipline: typed tool registry with validated inputs/outputs, sandboxing boundaries, and logged receipts.
+6) Verification: every committed state can be reconstructed from events + receipts (or snapshots) and validated against invariants.
+
+Non-goals (v0.1):
+- Multi-agent swarms with automatic delegation.
+- Fully automated long-term reflection writing to memory.
+- Cloud-managed accounts, hosted sync, or proprietary vendor binding.
+
+## 2. Terms
+
+Companion: A portable agent persona + runtime contract + memory.
+Capsule: Signed export package containing companion identity, policies, skills manifest, memory references/embeds, and integrity hashes.
+Receipt: Append-only record of a tool call or decision artifact (validated I/O + timing + hashes).
+Snapshot: A versioned state checkpoint enabling rollback/replay.
+Memory Unit: A structured, schema’d datum (fact/event/note) with provenance and lifecycle metadata.
+
+## 3. Architecture Overview
+
+Components (minimum viable):
+
+A) Capsule Service
+- Create capsule
+- Export capsule (JSON)
+- Import capsule (JSON)
+- Validate signature (initially “stubbed”, later Ed25519)
+- Validate schema + hashes
+- Resolve embedded memory units and/or external memory store references
+
+B) Memory Service
+- Two primary stores:
+  1. Event Log (append-only)
+  2. Facts Store (canonical resolved facts derived from events or direct insert)
+- Retrieval indexes (optional in v0.1):
+  - keyword
+  - vector (optional, pluggable)
+- Lifecycle:
+  - TTL expiration
+  - dedupe
+  - conflict resolution rules
+
+C) Tool Gateway
+- Tool registry with typed signatures
+- Input validation (schema)
+- Output validation (schema)
+- Sandboxed execution boundary (at least logical boundary in v0.1)
+- Receipts written as JSONL append-only logs
+
+D) Runtime Engine
+- Deterministic state machine: PLAN → ACT → VERIFY → COMMIT
+- Transcript captures:
+  - input prompt
+  - plan artifact
+  - tool receipts
+  - verification report
+  - commit record + snapshot id
+- Rollback:
+  - revert to prior snapshot
+  - continue from there with a new branch id
+
+E) Verification / Invariants Gate
+- Defines testable invariants (see invariants.md)
+- Runs on every COMMIT
+- Failing invariants blocks commit
+
+## 4. Data Model
+
+### 4.1 Capsule (portable export)
+
+Capsule is a single JSON document:
+- Has a schema version
+- Contains identity, policy, skills manifest
+- Contains integrity: hashes of embedded memory/receipts/snapshots
+- Contains either:
+  a) embedded memory units and optionally receipts, or
+  b) references to external stores (paths/URIs) plus verification hashes
+
+Capsule must be importable without network.
+
+### 4.2 Memory Units
+
+Memory Units are typed objects with:
+- id (stable)
+- type (fact/event/note/task/etc.)
+- schema_version
+- content (typed by unit type)
+- provenance:
+  - source (user/tool/runtime/import)
+  - created_at, created_by
+  - receipt_refs (optional)
+- lifecycle:
+  - ttl_seconds (optional)
+  - expires_at (optional)
+  - confidence (0..1)
+  - status (active/superseded/expired)
+- linkage:
+  - related_ids
+  - parent_id (optional)
+
+### 4.3 Receipts
+
+Receipts are immutable JSON lines:
+- receipt_id
+- timestamp_start, timestamp_end
+- tool_name, tool_version
+- input (validated) + input_hash
+- output (validated) + output_hash
+- status (ok/error)
+- error details if any
+- runtime_context: run_id, step_id, snapshot_in, snapshot_out
+
+Receipts are append-only; never edited in place.
+
+### 4.4 Snapshots
+
+Snapshots are named checkpoints:
+- snapshot_id
+- created_at
+- parent_snapshot_id (optional)
+- branch_id
+- state_hash
+- memory_head (event log position or hash)
+- receipts_head (receipt log position or hash)
+
+Rollback chooses a snapshot_id and resumes on a new branch_id.
+
+## 5. Runtime Contract (State Machine)
+
+Each run produces a Run Record:
+- run_id (uuid)
+- capsule_id
+- snapshot_in
+- prompt_input
+- steps[]
+
+Step phases:
+
+1) PLAN
+- Produce a Plan Artifact:
+  - goal
+  - assumptions
+  - required tools
+  - constraints
+  - acceptance criteria
+- No irreversible actions in PLAN.
+
+2) ACT
+- Execute tool calls through Tool Gateway only.
+- Each call emits a Receipt.
+- Runtime records order and dependency.
+
+3) VERIFY
+- Produce Verification Report:
+  - tool output validation results
+  - invariant pre-checks (as applicable)
+  - consistency checks vs memory
+  - errors + suggested rollback path
+- If VERIFY fails: no COMMIT. Optionally rollback or re-plan.
+
+4) COMMIT
+- If VERIFY passes:
+  - append events/memory updates
+  - create snapshot_out
+  - emit Commit Record (immutable):
+    - run_id, snapshot_in, snapshot_out
+    - list of receipt_ids
+    - list of memory_unit_ids written/superseded
+    - invariant check summary
+- If COMMIT attempted while invariants fail: runtime must block and emit a “commit_denied” event.
+
+Determinism requirement:
+- Given the same capsule + snapshot + same tool outputs (receipts), replay must reproduce the same committed state hash.
+
+## 6. Conflict Resolution (Memory)
+
+Facts store is derived from events or direct writes:
+- Facts have keys (namespace/key) and values.
+- Conflicts resolved by:
+  1) higher confidence wins
+  2) newer wins if confidence equal
+  3) explicit “supersedes” link overrides
+All resolution decisions are logged as events.
+
+TTL:
+- Expired units remain in event log but are excluded from active retrieval unless explicitly requested.
+
+## 7. Security & Integrity (v0.1)
+
+- Capsule integrity hashes cover:
+  - embedded memory units
+  - embedded receipts (if included)
+  - snapshot metadata
+- Signature:
+  - v0.1 allows “signature_stub” (for dev)
+  - v0.2 uses Ed25519 signature over canonical JSON serialization
+- Tool Gateway prevents arbitrary execution by:
+  - registry allowlist
+  - schema validation
+  - explicit working directory boundaries (as implemented)
+
+## 8. Minimal MVP (Week 1)
+
+Deliverables:
+1) Capsule export/import with schema validation + integrity hashes (signature stub ok).
+2) Memory store: sqlite with tables for events, facts, units.
+3) Tool registry with one demo tool and receipt logging JSONL.
+4) Runtime state machine with deterministic transcript and rollback via snapshots.
+5) Tests enforcing invariants in invariants.md.
+
+Definition of done:
+- `pytest` passes.
+- Export capsule → import capsule → replay receipts → same state_hash.
+
+## 9. Folder Layout (recommended)
+
+companion/
+  SPEC.md
+  invariants.md
+  capsule.schema.json
+  companion/
+    capsule.py
+    memory.py
+    tools.py
+    runtime.py
+  receipts/
+    receipts.jsonl
+  snapshots/
+    snapshot_index.json
+  tests/
+    test_invariants.py
+```
+
+---
+
+```markdown
+# invariants.md
+
+These are non-negotiable rules the runtime must enforce. Every COMMIT must pass all invariants. Tests must cover each invariant.
+
+I-001 (Schema Validity)
+All capsules and memory units MUST validate against their JSON schemas.
+
+I-002 (Append-only Receipts)
+Receipt logs MUST be append-only. No receipt record may be edited or deleted in place.
+
+I-003 (Receipt Immutability Hash)
+Each receipt MUST include input_hash and output_hash computed from canonical JSON serialization of input/output.
+
+I-004 (Tool Gateway Exclusivity)
+All tool executions MUST go through the Tool Gateway. Direct tool execution is forbidden.
+
+I-005 (Typed Tool I/O)
+Every tool MUST declare input_schema and output_schema. Tool calls MUST validate both input and output.
+
+I-006 (Deterministic Replay)
+Given the same capsule + snapshot_in + identical ordered receipts, replay MUST produce the same state_hash and facts view.
+
+I-007 (No Commit on Verify Failure)
+If VERIFY fails, COMMIT MUST NOT occur. Runtime must record failure and keep snapshot unchanged.
+
+I-008 (Commit Record Completeness)
+Every COMMIT MUST produce a Commit Record containing:
+- run_id
+- snapshot_in, snapshot_out
+- receipt_ids
+- memory_unit_ids written/superseded
+- invariant results summary
+
+I-009 (Snapshot Lineage)
+Every snapshot MUST have:
+- snapshot_id
+- created_at
+- branch_id
+- state_hash
+- parent_snapshot_id (unless genesis)
+and MUST be reachable from genesis following parent links.
+
+I-010 (Rollback Branching)
+Rollback MUST NOT overwrite history. Resuming from an older snapshot MUST create a new branch_id and new snapshots.
+
+I-011 (Memory Unit Provenance)
+Every memory unit MUST include provenance.source and provenance.created_at. Units without provenance are invalid.
+
+I-012 (TTL Handling)
+Expired units MUST remain in the event log but MUST be excluded from active retrieval by default.
+
+I-013 (Fact Conflict Resolution Logged)
+Any change to an existing fact key MUST be accompanied by an event describing the resolution decision (confidence/recency/supersedes).
+
+I-014 (Capsule Integrity Hashes)
+Capsule MUST include integrity hashes for embedded memory units and (if embedded) receipts. Import MUST verify these hashes.
+
+I-015 (Local-first Import)
+Import MUST succeed without requiring network access. Any external reference must be optional and validated via hashes if present.
+
+I-016 (Idempotent Import)
+Importing the same capsule twice MUST NOT duplicate memory units or receipts (dedupe by stable ids/hashes).
+
+I-017 (Monotonic Event Log)
+Event log ids (or sequence numbers) MUST be monotonic increasing. No gaps required, but ordering must be preserved.
+
+I-018 (Verification Gate Before Commit)
+Invariant checks MUST run in VERIFY (or immediately before COMMIT) and MUST block COMMIT on any failure.
+
+I-019 (Canonical Serialization)
+All hashing/signing MUST use a canonical JSON serialization (sorted keys, no whitespace, UTF-8).
+
+I-020 (No Silent Data Loss)
+If any embedded object fails validation or hash check during import, the import MUST fail loudly and report which object failed.
+```
+
+---
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "capsule.schema.json",
+  "title": "Compatible Companion Capsule",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "capsule_id", "created_at", "identity", "policy", "skills", "integrity"],
+  "properties": {
+    "schema_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "capsule_id": { "type": "string", "minLength": 8 },
+    "created_at": { "type": "string", "format": "date-time" },
+
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "persona_version"],
+      "properties": {
+        "name": { "type": "string" },
+        "persona_version": { "type": "string" },
+        "public_key": { "type": ["string", "null"] },
+        "tags": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+
+    "policy": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "local_first": { "type": "boolean" },
+        "network_allowed": { "type": "boolean" },
+        "tool_allowlist": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+
+    "skills": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["manifest_version", "entries"],
+      "properties": {
+        "manifest_version": { "type": "string" },
+        "entries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "version", "interface"],
+            "properties": {
+              "name": { "type": "string" },
+              "version": { "type": "string" },
+              "interface": { "type": "string" },
+              "notes": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+
+    "memory": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "embedded_units": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/memory_unit" }
+        },
+        "external_references": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["ref_type", "ref", "hash"],
+            "properties": {
+              "ref_type": { "type": "string", "enum": ["path", "uri"] },
+              "ref": { "type": "string" },
+              "hash": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+
+    "receipts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "embedded": { "type": "array", "items": { "$ref": "#/$defs/receipt" } },
+        "external_reference": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["ref_type", "ref", "hash"],
+          "properties": {
+            "ref_type": { "type": "string", "enum": ["path", "uri"] },
+            "ref": { "type": "string" },
+            "hash": { "type": "string" }
+          }
+        }
+      }
+    },
+
+    "snapshots": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "index": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/snapshot" }
+        }
+      }
+    },
+
+    "integrity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["canonicalization", "hash_algo", "object_hashes"],
+      "properties": {
+        "canonicalization": { "type": "string", "enum": ["json_sorted_keys_utf8"] },
+        "hash_algo": { "type": "string", "enum": ["sha256"] },
+        "object_hashes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "id", "hash"],
+            "properties": {
+              "kind": { "type": "string", "enum": ["memory_unit", "receipt", "snapshot"] },
+              "id": { "type": "string" },
+              "hash": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sig_type", "value"],
+      "properties": {
+        "sig_type": { "type": "string", "enum": ["none", "stub", "ed25519"] },
+        "value": { "type": "string" }
+      }
+    }
+  },
+
+  "$defs": {
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "created_at"],
+      "properties": {
+        "source": { "type": "string", "enum": ["user", "tool", "runtime", "import"] },
+        "created_at": { "type": "string", "format": "date-time" },
+        "created_by": { "type": ["string", "null"] },
+        "receipt_refs": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "lifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ttl_seconds": { "type": ["integer", "null"], "minimum": 1 },
+        "expires_at": { "type": ["string", "null"], "format": "date-time" },
+        "confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "status": { "type": "string", "enum": ["active", "superseded", "expired"] }
+      }
+    },
+    "memory_unit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "schema_version", "content", "provenance", "lifecycle"],
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string", "enum": ["fact", "event", "note", "task"] },
+        "schema_version": { "type": "string" },
+        "content": { "type": "object", "additionalProperties": true },
+        "provenance": { "$ref": "#/$defs/provenance" },
+        "lifecycle": { "$ref": "#/$defs/lifecycle" },
+        "related_ids": { "type": "array", "items": { "type": "string" } },
+        "parent_id": { "type": ["string", "null"] }
+      }
+    },
+    "receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["receipt_id", "tool_name", "tool_version", "timestamp_start", "timestamp_end", "status", "input", "output", "input_hash", "output_hash"],
+      "properties": {
+        "receipt_id": { "type": "string" },
+        "tool_name": { "type": "string" },
+        "tool_version": { "type": "string" },
+        "timestamp_start": { "type": "string", "format": "date-time" },
+        "timestamp_end": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["ok", "error"] },
+        "input": { "type": "object", "additionalProperties": true },
+        "output": { "type": "object", "additionalProperties": true },
+        "input_hash": { "type": "string" },
+        "output_hash": { "type": "string" },
+        "error": { "type": ["object", "null"], "additionalProperties": true },
+        "runtime_context": { "type": ["object", "null"], "additionalProperties": true }
+      }
+    },
+    "snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["snapshot_id", "created_at", "branch_id", "state_hash"],
+      "properties": {
+        "snapshot_id": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "branch_id": { "type": "string" },
+        "parent_snapshot_id": { "type": ["string", "null"] },
+        "state_hash": { "type": "string" },
+        "memory_head": { "type": ["string", "null"] },
+        "receipts_head": { "type": ["string", "null"] }
+      }
+    }
+  }
+}
+```
+
+When you send “duty details,” have them align to these artifacts:
+
+* Claude: refine SPEC.md (edge cases + threat model) without changing invariants unless justified.
+* DeepSeek: implement skeleton that passes tests derived from invariants.md.
+* Perplexity: produce “frozen facts” brief about Letta/MemGPT status and any portability standards; you’ll store as `research/frozen_facts.md`.
+* LMArena: provide evaluation prompts/rubrics for the four task classes (spec, code, debugging, contradiction resolution).
+
+If you want a tighter kickoff, tell them this rule: “No new features until I-001 through I-010 have tests and pass.”
+

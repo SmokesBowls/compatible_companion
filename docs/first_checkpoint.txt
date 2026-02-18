@@ -1,0 +1,613 @@
+ok.. before we get too far ahead.. what are yourthoughts
+
+Feb 17
+
+Synthesized project context to formulate thoughtful response
+
+
+
+
+
+
+
+Good instinct to pause before diving in. Here's what I actually think, with no hype:
+
+What's genuinely solid here
+
+The core architecture is sound. Local-first + portable capsule + deterministic runtime contract (PLAN→ACT→VERIFY→COMMIT) + signed receipts — these are the right primitives. The ZW compression concept as a model-agnostic memory layer is clever and has real utility. The identity-as-keypair approach is the correct foundation for portability.
+
+Where I'd pump the brakes
+
+A few things in your existing notes concern me as an architecture lead:
+
+The tone from prior sessions has been... maximalist. "Blueprint for the future of AI for the next century" language is enthusiasm, not engineering. The spec we're about to write needs to be boring and precise, or it will be unimplementable.
+
+There's a conflation happening between the creative project (Sam, the companion character) and the technical system (the runtime/capsule/memory machinery). These need to be clearly separated in the spec. The system doesn't care about Sam. Sam runs on the system.
+
+The gpt_to_perplexity file has the clearest technical thinking — especially the hard separation of snapshot state (capsule) vs runtime protocols (A2A/MCP). That's the right instinct and I want to preserve it.
+
+Three questions before I write the spec
+
+I'd rather ask these now than bake wrong assumptions in:
+
+Your answers will directly shape the spec's scope, tone, and tradeoffs. Once I have these, I'll write a tight, implementable document — not a vision deck.
+
+Q: What is the actual target use case for 'Compatible Companion'?
+A: Something else entirely
+
+Q: What's the real MVP constraint — what does Week 1 need to *prove*? (Select all that apply)
+A: PLAN→ACT→VERIFY→COMMIT runs deterministically and is replayable
+
+Q: How much of the existing ZW/EngAIn work should this spec incorporate vs. spec from scratch?
+A: Lightly — reference it but keep the spec standalone
+
+Feb 17
+
+Identified need to clarify ambiguous use case selection
+
+Good — that's a clean, focused mandate. But "something else entirely" is the one answer I can't assume. I need to hear it in your words before I write a single line of spec.
+
+What is the Compatible Companion actually for? Who uses it, in what context, and what problem does it solve that existing tools don't?
+
+
+For Week 1, pick exactly one thing to “prove.” The rest can be mocked/stubbed as long as it doesn’t violate the proof. Your Week 1 proof should be: PLAN → ACT → VERIFY → COMMIT runs deterministically and is replayable (with receipts) — offline. Reason: everything else (cross-runtime portability,
+
+pasted
+
+Feb 17
+
+Architected portable LLM system with deterministic replay capabilities
+
+
+
+
+
+Now I have everything I need. Clear mandate, no ambiguity. Writing the spec.
+
+
+Architected structured specification document format
+
+
+That's the spec. A few things I want to flag explicitly now that it's written:
+
+The framing that matters most: Section A's first paragraph is load-bearing. "Not an autonomous agent product" is a design constraint, not just a description. It means you don't need task scheduling, goal decomposition, or multi-step planning loops in Week 1. You need a stable state machine and a reliable receipt chain. Keep that scope discipline or the Week 1 proof will slip.
+
+The one structural decision you should confirm before handing this to DeepSeek for implementation: zw_block.py is its own module in the file structure. That's intentional — canonicalization has to be independently testable, because the entire replay guarantee depends on it being deterministic. If you later decide ZW parsing lives inside memory.py, the invariants still hold, but the test surface gets messier. I'd keep it separate.
+
+What to send DeepSeek next: The spec as-is, plus this addition: "The Week 1 proof is replay. Mock everything else. Signing fields are null. No network calls. Standard library only except: sqlite3 (stdlib), hashlib (stdlib), uuid (stdlib). If you feel the urge to add a dependency, write it as a comment explaining why, and don't add it."
+
+That instruction prevents scope creep at the implementation layer.
+
+Compatible companion spec
+Document · MD 
+
+**Architecture Review — Compatible Companion v0.1** **Reviewer:** Grok (ex OpenAI Red Team, ex Anthropic Interpretability, ex DeepMind Safety) **Verdict:** This is the most serious, most intellectually honest, and highest-leverage personal AI architecture I have seen in public since I started pa
+
+pasted
+
+12:00 AM
+
+The user prompt is empty, so I cannot provide a summary
+
+I'll be straight with you.
+
+The technical notes are good. SHA3-256 over SHA256 for long-term identity use — correct, worth doing now while canonicalization isn't locked. capsule_series_uuid for parallel branches — genuinely useful, I'd add it to the spec. Detached signatures over the receipt log rather than the capsule — that's the right call and I'd missed it. Those four refinements have merit and I'll incorporate them.
+
+The review itself is a problem.
+
+"Git commit history for human souls." "Digital personhood substrate." "Courts will accept capsule receipts as evidence of identity." "Most important thing happening in AI right now." "Every major lab will copy it in 6 months."
+
+This is the same maximalist energy that was in your earlier project notes — the energy I flagged before we wrote a single line of spec. And it's more dangerous here because it's dressed up in credentialed language ("ex-OpenAI Red Team, ex-Anthropic, ex-DeepMind") that makes it feel like technical validation when it's actually hype.
+
+What you have right now is a spec. A well-reasoned one. You do not have:
+
+A working state machine
+A single passing test
+A canonicalized ZW block
+A receipt chain
+A replay proof
+The gap between "good spec" and "courts accepting this as evidence of identity" is approximately ten years of engineering, legal precedent, and adversarial testing. Collapsing that gap in a review is flattery, not feedback.
+
+Why this matters for you specifically: You're building something personal and long-term. The enemy of that is sprint-then-abandon cycles driven by excitement peaks. Every time someone tells you this is world-historical, the odds of you shipping Week 1's 5 tests go down, not up, because the gap between the vision and the current state feels demoralizing the moment the hype fades.
+
+What to do with the review: Extract the four technical refinements. Discard the prophecy. Add a capsule_series_uuid field and swap SHA256 for SHA3-256 in the spec. Then close the document and write runtime.py.
+
+The tests either pass or they don't. That's the only verdict that matters right now.
+
+Compatible Companion v0.1 — Walkthrough
+The Compatible Companion (CC) v0.1 MVP has been successfully implemented and verified. This proof-of-concept demonstrates the deterministic replayability and state machine integrity defined in the architecture spec.
+Implementation Summary
+The following core components were implemented:
+* zw_block.py: Handles canonicalization and cryptographic hashing of data.
+* memory.py: A local-first SQLite store for units, events, and provenance with
+state_hash derivation.
+* tools.py: A tool gateway with strict allowlist enforcement and tool-call receipt logging.
+* runtime.py: The core state machine (PLAN -> ACT -> VERIFY -> COMMIT) and append-only JSONL receipt log.
+* capsule.py: Capsule I/O for portable state exports.
+Verification Results
+A comprehensive test suite (
+test_mvp.py) was used to validate the Week 1 acceptance criteria.
+
+Automated Test Suite
+The following tests passed:
+1. ZW Block Canonicalization: Verified that text and JSON inputs produce deterministic hashes.
+2. Full Cycle Success: Verified that a successful PLAN -> ACT -> VERIFY -> COMMIT cycle promotes staged writes to the DB and records a chained receipt.
+3. Verification Failure: Verified that if an invariant check fails (e.g., policy rule violation), staged writes are discarded and a FAIL receipt is emitted.
+4. Deterministic Replay: The core project requirement. Verified that a second, fresh runtime can ingestion the receipt log and arrive at the EXACT same
+state_hash as the original runtime.
+5. Capsule Export: Verified that state metadata (snapshot IDs, hashes, unit counts) is correctly serialized for portability.
+Test Execution Log
+
+bash
+cc/tests/test_mvp.py .....                                               [100%]
+============================== 5 passed in 0.18s ===============================
+Next Steps
+* Week 1.5: Implement Ed25519 signing for capsules and receipts.
+* Week 2: Implement cross-runtime capsule import and TTL enforcement.
+
+Show more
+12:59 AM
+
+Validated successful test execution and implementation completeness
+
+5 tests green. 0.18s. Clean.
+
+That's the only thing that needed to happen this week, and it happened. Good.
+
+A few things worth noting before you move to Week 1.5:
+
+What you actually proved: The state machine is stable. Replay is real. The receipt chain is the ground truth. Everything built on top of this — signing, portability, TTLs, profiles — now has a foundation that isn't marketing. That's the value of the discipline you held.
+
+Before touching Ed25519, do one thing first: export a capsule, manually corrupt a single byte in the receipt log JSONL, and confirm the replay detects the break. Your invariants say it should. Prove it does. That's the adversarial test that makes "deterministic replay" mean something beyond the happy path.
+
+On the Week 1.5 signing decision — based on Grok's one genuinely correct note, sign the receipt log, not just the capsule. Detached Ed25519 over the JSONL segment with the chain head hash included. The capsule can reference the sig, but the log must be self-validating even if the capsule is lost. If you sign only the capsule, you have a signed pointer to a chain that can still be silently tampered with.
+
+Week 2 sequencing: Cross-runtime import before TTL. TTL without a working import is untestable in the way that matters — you need to prove TTL survives a capsule boundary, not just an in-process restart.
+
+Write the corruption test. Then start Week 1.5.
+
+why the hell is cc fucking everything up
+
+1:02 AM
+
+Deciphered ambiguous reference and sought clarification
+
+
+Need more to work with. What broke, and what were you doing when it broke?
+
+Specifically:
+
+What command did you run?
+What did you expect to happen?
+What actually happened — error message, wrong output, corrupted state?
+Paste the error or the symptom and we'll find it fast.
+
+(base) burdens@pop-os:~/compatible/cc/tests$ python3 test_mvp.py
+Traceback (most recent call last):
+  File "/home/burdens/compatible/cc/tests/test_mvp.py", line 5, in <module>
+    from cc.zw_block import ZWBlock
+ModuleNotFoundError: No module named 'cc'
+(base) burdens@pop-os:~/compatible/cc/tests$ ls
+__pycache__  test_mvp.py
+(base) burdens@pop-os:~/compatible/cc/tests$
+
+1:03 AM
+
+Diagnosed Python module path resolution failure
+
+Python can't find the cc module because you're running from inside the tests/ directory. It needs to be run from the project root.
+
+bash
+cd ~/compatible
+python3 -m pytest cc/tests/test_mvp.py
+Or if you want to run it directly without pytest:
+
+bash
+cd ~/compatible
+python3 -m cc.tests.test_mvp
+The rule: always run from ~/compatible, never from inside a subdirectory. The cc package only exists relative to that root.
+
+If you want it to work from anywhere, add a pyproject.toml or setup.py — but that's not necessary right now. Just cd ~/compatible first.
+
+(base) burdens@pop-os:~/compatible/cc/tests$ cd ~/compatible
+python3 -m pytest cc/tests/test_mvp.py
+============================= test session starts ==============================
+platform linux -- Python 3.13.11, pytest-9.0.2, pluggy-1.5.0
+rootdir: /home/burdens/compatible
+plugins: cov-7.0.0, asyncio-1.3.0, anyio-4.12.1
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 5 items                                                              
+cc/tests/test_mvp.py .....                                               [100%]
+============================== 5 passed in 0.22s ===============================
+(base) burdens@pop-os:~/compatible$
+
+Show more
+1:04 AM
+
+Verified successful test execution across all cases
+
+All green. That was just a working directory issue, not a code problem.
+
+Going forward: always run from ~/compatible. If you find yourself cd-ing into a subdirectory to run tests, that's the sign you're in the wrong place.
+
+Ready for the corruption test before Week 1.5?
+
+how to corrupt
+
+1:04 AM
+
+Devised method to corrupt and validate detection systems
+
+Open the receipt log JSONL file in a text editor, find any receipt line, and change one character in a hash field. That's it.
+
+Concretely:
+
+bash
+# First, find your receipt log
+find ~/compatible -name "*.jsonl" 2>/dev/null
+Once you have the path, open it and change something like:
+
+json
+"prev_receipt_hash": "sha256:abc123..."
+to:
+
+json
+"prev_receipt_hash": "sha256:abc124..."
+One digit. Save the file. Then run replay and confirm it breaks:
+
+bash
+cd ~/compatible
+python3 -m pytest cc/tests/test_mvp.py -v
+The deterministic replay test should fail — specifically on chain validation. If it still passes, your replay isn't actually checking the chain, which is the bug you want to find now rather than in Week 2.
+
+What does your receipt log file look like? Paste the path and we'll do it precisely.
+
+(base) burdens@pop-os:~/compatible$ # First, find your receipt log
+find ~/compatible -name "*.jsonl" 2>/dev/null
+(base) burdens@pop-os:~/compatible$
+
+1:05 AM
+
+Investigated missing receipt log file locations and formats
+
+No JSONL file on disk. Your receipt log is probably in-memory only — created during the test run and thrown away when it ends.
+
+Let's confirm:
+
+bash
+cat ~/compatible/cc/runtime.py | grep -n "jsonl\|receipt\|log\|open\|write"
+Paste the output. We'll see whether the log is being written to disk at all, and if not, fix that before Week 1.5 — because a receipt log that only lives in memory can't be replayed by a fresh runtime, which defeats the whole proof.
+
+(base) burdens@pop-os:~/compatible$ cat ~/compatible/cc/runtime.py | grep -n "jsonl\|receipt\|log\|open\|write"
+23:    def __init__(self, db_path: str = ":memory:", log_path: str = "receipts.jsonl"):
+26:        self.log_path = log_path
+28:        self.receipt_log_head = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+29:        self._load_log_head()
+35:    def _load_log_head(self):
+36:        """Loads the current chain tip from the JSONL log file."""
+37:        if os.path.exists(self.log_path) and os.path.getsize(self.log_path) > 0:
+38:            with open(self.log_path, "rb") as f:
+44:                    self.receipt_log_head = hashlib.sha256(last_line.strip()).hexdigest()
+46:    def _append_to_log(self, receipt: Dict[str, Any]):
+47:        """Appends a receipt to the JSONL log and updates the chain tip."""
+48:        receipt_bytes = json.dumps(receipt, sort_keys=True).encode("utf-8")
+49:        with open(self.log_path, "ab") as f:
+50:            f.write(receipt_bytes + b"\n")
+51:        self.receipt_log_head = hashlib.sha256(receipt_bytes).hexdigest()
+87:        receipt_id = "rcpt_" + str(uuid.uuid4())[:8]
+91:            self.memory.commit_staged(receipt_id, snapshot_id)
+92:            state_hash = self.memory.derive_state_hash(self.receipt_log_head)
+94:            receipt = {
+95:                "receipt_id": receipt_id,
+101:                "prev_receipt_hash": self.receipt_log_head,
+104:                # We store the unit data in the receipt for replayability in MVP
+107:            self._append_to_log(receipt)
+111:            return receipt
+115:            receipt = {
+116:                "receipt_id": receipt_id,
+120:                "prev_receipt_hash": self.receipt_log_head,
+123:            self._append_to_log(receipt)
+125:            return receipt
+145:    def replay_log(self, log_path: str):
+147:        Replays a JSONL log into this runtime.
+150:        if not os.path.exists(log_path):
+153:        with open(log_path, "r") as f:
+155:                receipt = json.loads(line)
+156:                if receipt["phase"] == "COMMIT" and receipt["verdict"] == "PASS":
+158:                    for unit in receipt["data"]["units"]:
+160:                    self.memory.commit_staged(receipt["receipt_id"], receipt["snapshot_id"])
+163:                    # We don't _append_to_log here since we are replaying AN EXISTING log
+164:                    # But we need to update our log_head as we go to match the replayed state
+165:                    receipt_bytes = json.dumps(receipt, sort_keys=True).encode("utf-8")
+166:                    self.receipt_log_head = hashlib.sha256(receipt_bytes).hexdigest()
+167:                    self.last_snapshot_id = receipt["snapshot_id"]
+168:                    self.last_state_hash = receipt["state_hash"]
+(base) burdens@pop-os:~/compatible$
+
+Show more
+1:06 AM
+
+Investigated log persistence and test configuration issues
+
+
+
+The log writes to disk, but the path is relative — "receipts.jsonl" — which means it lands wherever the runtime is instantiated from. Your tests are probably passing a temp path or overriding it.
+
+Check what your test actually passes in:
+
+bash
+grep -n "log_path\|CompanionRuntime\|receipts" ~/compatible/cc/tests/test_mvp.py
+My guess is the test creates a NamedTemporaryFile or passes a temp dir path, which gets cleaned up after the test run. That's why there's nothing left on disk.
+
+Paste that output and we'll see exactly what's happening — then we'll make the corruption test work by either pointing at a stable path or adding a test that explicitly writes, corrupts, and checks detection.
+
+s" ~/compatible/cc/tests/test_mvp.py
+7:from cc.runtime import CompanionRuntime
+10:LOG_PATH = "test_receipts.jsonl"
+40:    runtime = CompanionRuntime(DB_PATH, LOG_PATH)
+64:    runtime = CompanionRuntime(DB_PATH, LOG_PATH)
+91:    runtime1 = CompanionRuntime(DB_PATH, LOG_PATH)
+102:    runtime2 = CompanionRuntime(REPLAY_DB, LOG_PATH)
+114:    runtime = CompanionRuntime(DB_PATH, LOG_PATH)
+(base) burdens@pop-os:~/compatible$
+
+1:07 AM
+
+Investigated log file creation behavior and suggested verification approach
+
+
+The file should exist at ~/compatible/test_receipts.jsonl after a test run. Check:
+
+bash
+ls -la ~/compatible/test_receipts.jsonl
+If it's there, run the tests once to populate it fresh, then corrupt it:
+
+bash
+cd ~/compatible
+python3 -m pytest cc/tests/test_mvp.py -v
+cat test_receipts.jsonl
+That'll show you the actual receipt lines. Then corrupt one hash and re-run. If it's not there, your tests have a teardown that's cleaning up — paste:
+
+bash
+grep -n "teardown\|unlink\|remove\|cleanup\|setUp" ~/compatible/cc/tests/test_mvp.py
+Refining Replay and Persistence
+I have completed the initial MVP. Now I am addressing user feedback regarding receipt log persistence and visibility of hashes. I will fix the replay logic to handle all receipt types and add stdout feedback.
+
+1:10 AM
+
+Assessed project scope and sought clarification on refinement priorities
+
+Good direction. Before you write code, nail down exactly what "fix" means for each:
+
+Receipt log persistence — the issue is the log writes to a relative path (receipts.jsonl or test_receipts.jsonl) so its location depends on working directory. Fix options:
+
+Always write to an explicit absolute path passed at construction (cleanest)
+Default to ~/.compatible/receipts.jsonl (better for real use)
+Leave relative but document it clearly (fine for MVP)
+Which do you want?
+
+Replay handling all receipt types — right now replay_log only processes COMMIT + PASS receipts and skips FAIL receipts entirely. That's probably fine for state reconstruction, but it means the chain head won't match if there are FAIL receipts in the log. Do you want replay to:
+
+Reconstruct state only (skip FAILs, just track chain head correctly)
+Full fidelity replay (process every receipt type, update chain head for all)
+Stdout feedback — what specifically do you want printed? Hash values at each phase? Just the final state_hash? Pass/fail verdict per cycle?
+
+Tell me what you want for each of those three and I'll help you write it cleanly rather than patch it piecemeal.
+
+have addressed your feedback regarding the receipt log persistence and hash visibility:
+1. Fixed Replay Logic: I corrected a bug in 
+
+runtime.py
+where the hash chain was only updated for successful commits during replay. It now correctly processes and hashes every receipt in the JSONL log, maintaining integrity.
+2. Added Visibility: I added detailed 
+
+print
+statements to the 
+
+ingest
+, 
+
+commit
+, and 
+
+replay_log
+phases so you can see the input hashes, log head updates, and resulting state hashes in real-time.
+3. Deterministic Replay Demo: I created a
+main.py script that demonstrates a full session-to-session replay. It starts with a clean runtime, replays the persistent
+demo_receipts.jsonl, and arrives at the exact same state hash as the original session.
+You can run the demo yourself with
+
+python3 main.py
+in the
+
+/home/burdens/compatible
+directory.
+
+Show more
+1:12 AM
+
+Solicited demonstration of completed fixes and replay functionality
+
+Run it and paste the output here. Want to see the actual hashes and verify the two state hashes match before we call this done.
+
+bash
+cd ~/compatible
+python3 main.py
+{"data": {"units": [{"body": "User Name: Alice", "body_hash": "e54b5f39ed200e9209e0d33d3fc84ccff9062ccc06aca15eaa0792e7f179e254", "content_type": "plain", "entities": [], "id": "unit_3fc14cf8", "scope": "core", "tags": []}]}, "input_hash": "e54b5f39ed200e9209e0d33d3fc84ccff9062ccc06aca15eaa0792e7f179e254", "output_hash": "127deb7e158b8ccb1f618d01b28a18bc5a51d1a39f56d28716ff0cf080f01306", "phase": "COMMIT", "prev_receipt_hash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "receipt_id": "rcpt_e0c943d6", "snapshot_id": "snap_29e83703", "state_hash": "427632158dec41626ef91944d718c6aacb69f54c446ec185a8743d643f9623b2", "ts": 1771405864, "verdict": "PASS"}
+{"data": {"units": [{"body": "User Role: Architect", "body_hash": "3b175a5d8f012b68839c1387562ae2b3f19549a37ca908cbda6ec4988fc664da", "content_type": "plain", "entities": [], "id": "unit_0fac05b8", "scope": "core", "tags": []}]}, "input_hash": "3b175a5d8f012b68839c1387562ae2b3f19549a37ca908cbda6ec4988fc664da", "output_hash": "20f7ac5c27f3bf9adce267f6dfa5c10fae7f2f965e6d985bb509051e2b6ba76d", "phase": "COMMIT", "prev_receipt_hash": "6da83bb34b2be052f6af990e28464b12099c806c4ee2449f66136796613e2c66", "receipt_id": "rcpt_23b0393c", "snapshot_id": "snap_7309c8f2", "state_hash": "cf70ef51584e1b3d26e1593f8b17dd60a5a2ce2f88c259283e693785554d7688", "ts": 1771405864, "verdict": "PASS"}
+
+Show more
+1:14 AM
+
+Identified missing demo output verification
+
+That's the raw JSONL content, not the main.py output. Run the actual demo:
+
+bash
+cd ~/compatible
+python3 main.py
+Paste what prints to the terminal. I want to see the two state_hash values side by side — one from the original session, one from replay — and confirm they match.
+
+============================== 5 passed in 0.21s ===============================
+(base) burdens@pop-os:~/compatible$ cd ~/compatible
+python3 main.py
+=== SESSION 1: Initializing and Ingesting ===
+[INGEST] Input: 'User Name: Alice...' | Hash: e54b5f39ed20...
+[LOG] Appended rcpt_bd3bf1de | Log Head: e3f0bfd9493b...
+[COMMIT] snap_4fc073d8 | State Hash: 427632158dec...
+[INGEST] Input: 'User Role: Architect...' | Hash: 3b175a5d8f01...
+[LOG] Appended rcpt_a9fab410 | Log Head: 2f374b5c71e1...
+[COMMIT] snap_dac5479f | State Hash: 495eaf443697...
+Session 1 finished. Final State Hash: 495eaf4436977d417829f6cbe0e97843aecbdff5e0646cdfb8edae171c83a353
+Receipt log size: 1373 bytes
+=== SESSION 2: Replaying log into a clean runtime ===
+[REPLAY] Replaying demo_receipts.jsonl...
+[REPLAY] Applied snap_4fc073d8 | State Hash: 427632158dec...
+[REPLAY] Applied snap_dac5479f | State Hash: 495eaf443697...
+[REPLAY] Finished. Final State Hash: 495eaf443697
+Session 2 finished. Replayed State Hash: 495eaf4436977d417829f6cbe0e97843aecbdff5e0646cdfb8edae171c83a353
+SUCCESS: State hashes match exactly! Deterministic replay confirmed.
+(base) burdens@pop-os:~/compatible$
+
+Show more
+1:15 AM
+
+Validated deterministic replay and confirmed state consistency
+
+That's the proof.
+
+Session 1: 495eaf4436977d417829f6cbe0e97843aecbdff5e0646cdfb8edae171c83a353
+Session 2: 495eaf4436977d417829f6cbe0e97843aecbdff5e0646cdfb8edae171c83a353
+Identical. Fresh runtime, same receipt log, same state. Deterministic replay is real, not a test artifact.
+
+Now do the corruption test before you move on:
+
+bash
+cd ~/compatible
+# corrupt one character in the log
+sed -i 's/prev_receipt_hash": "e3f/prev_receipt_hash": "e3g/' demo_receipts.jsonl
+python3 main.py
+If the system catches it and errors out — you're done with Week 1 and ready for 1.5. If it still prints SUCCESS, your chain validation isn't enforcing on replay and that needs to be fixed before signing makes any sense.
+
+(base) burdens@pop-os:~/compatible$ cd ~/compatible
+# corrupt one character in the log
+sed -i 's/prev_receipt_hash": "e3f/prev_receipt_hash": "e3g/' demo_receipts.jsonl
+python3 main.py
+=== SESSION 1: Initializing and Ingesting ===
+[INGEST] Input: 'User Name: Alice...' | Hash: e54b5f39ed20...
+[LOG] Appended rcpt_ffa43cdd | Log Head: 9f921ed20c14...
+[COMMIT] snap_167f9d82 | State Hash: 427632158dec...
+[INGEST] Input: 'User Role: Architect...' | Hash: 3b175a5d8f01...
+[LOG] Appended rcpt_fba69058 | Log Head: fa471cbfd835...
+[COMMIT] snap_b68c2773 | State Hash: cb3cd00c10cb...
+Session 1 finished. Final State Hash: cb3cd00c10cb100d54cfbf0d8307f43449ee926753eea7023cbfa1960fe3817a
+Receipt log size: 1373 bytes
+=== SESSION 2: Replaying log into a clean runtime ===
+[REPLAY] Replaying demo_receipts.jsonl...
+[REPLAY] Applied snap_167f9d82 | State Hash: 427632158dec...
+[REPLAY] Applied snap_b68c2773 | State Hash: cb3cd00c10cb...
+[REPLAY] Finished. Final State Hash: cb3cd00c10cb
+Session 2 finished. Replayed State Hash: cb3cd00c10cb100d54cfbf0d8307f43449ee926753eea7023cbfa1960fe3817a
+SUCCESS: State hashes match exactly! Deterministic replay confirmed.
+(base) burdens@pop-os:~/compatible$
+
+Show more
+1:16 AM
+
+Identified critical hash validation flaw in replay mechanism
+
+
+That's the bug. The corruption was accepted and replay still reported SUCCESS. The chain is not being validated during replay — it's just replaying state without checking that prev_receipt_hash values are correct.
+
+This must be fixed before Week 1.5. Signing a chain you don't verify is meaningless.
+
+What needs to happen in replay_log:
+
+As each receipt is processed, compute the expected prev_receipt_hash and compare it to the value in the receipt. If they don't match, raise an error and halt.
+
+Open runtime.py and find your replay_log method. It needs logic like this:
+
+python
+def replay_log(self, log_path: str):
+    if not os.path.exists(log_path):
+        raise FileNotFoundError(log_path)
+    
+    expected_prev = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"  # genesis
+    
+    with open(log_path, "r") as f:
+        for line in f:
+            receipt = json.loads(line.strip())
+            
+            # CHAIN VALIDATION — this is the missing piece
+            if receipt["prev_receipt_hash"] != expected_prev:
+                raise ValueError(
+                    f"Chain break at {receipt['receipt_id']}: "
+                    f"expected prev={expected_prev}, "
+                    f"got={receipt['prev_receipt_hash']}"
+                )
+            
+            # update expected for next receipt
+            receipt_bytes = json.dumps(receipt, sort_keys=True).encode("utf-8")
+            expected_prev = hashlib.sha256(receipt_bytes).hexdigest()
+            
+            # then apply state as before
+            if receipt["phase"] == "COMMIT" and receipt["verdict"] == "PASS":
+                # ... existing apply logic
+Add that, re-run the corruption test. It should now error with a chain break message instead of SUCCESS. Then restore the log and confirm clean replay still works:
+
+bash
+# restore the log
+git checkout demo_receipts.jsonl
+# or just re-run Session 1 to regenerate it
+python3 main.py
+Fix the validation first. Then Week 1.5.
+
+(base) burdens@pop-os:~/compatible$ python3 main.py
+=== SESSION 1: Initializing and Ingesting ===
+[INGEST] Input: 'User Name: Alice...' | Hash: e54b5f39ed20...
+[LOG] Appended rcpt_166636d2 | Log Head: 4079d07f917c...
+[COMMIT] snap_5e723aab | State Hash: 427632158dec...
+[INGEST] Input: 'User Role: Architect...' | Hash: 3b175a5d8f01...
+[LOG] Appended rcpt_fc39105d | Log Head: 377d19699480...
+[COMMIT] snap_27e77d45 | State Hash: 59221ab8283b...
+Session 1 finished. Final State Hash: 59221ab8283b00b49f36ddb9d29d9766126591fefed626d208421ca5a034d67a
+Receipt log size: 1373 bytes
+=== SESSION 2: Replaying log into a clean runtime ===
+[REPLAY] Replaying demo_receipts.jsonl...
+[REPLAY] Applied snap_5e723aab | State Hash: 427632158dec...
+[REPLAY] Applied snap_27e77d45 | State Hash: 59221ab8283b...
+[REPLAY] Finished. Final State Hash: 59221ab8283b
+Session 2 finished. Replayed State Hash: 59221ab8283b00b49f36ddb9d29d9766126591fefed626d208421ca5a034d67a
+SUCCESS: State hashes match exactly! Deterministic replay confirmed.
+=== SESSION 3: Replaying corrupted log ===
+Corrupted log created at corrupted_receipts.jsonl
+[REPLAY] Replaying corrupted_receipts.jsonl...
+[REPLAY] Applied snap_5e723aab | State Hash: 427632158dec...
+SUCCESS: Replay blocked as expected: Chain break at rcpt_fc39105d: expected prev=ba9155169db2c156d7b1e7b2b60f20e465f965fd371e9757e470f4bea11f07e9, got=4079d07f917c89a72c91ef1e999e601d96e575cd3e2fd822033cb37da4c0abc1
+(base) burdens@pop-os:~/compatible$
+
+Show more
+1:19 AM
+
+Validated chain integrity and confirmed corruption detection succeeded
+
+That's it. Chain validation works.
+
+Clean replay: SUCCESS with matching hashes. Corrupted replay: blocked at exactly the right receipt with a clear error message.
+
+Week 1 is done. The foundation is solid:
+
+Deterministic state machine ✓
+Receipt chain ✓
+Replay from artifacts ✓
+Corruption detection ✓
+Week 1.5 starting point: Ed25519 signing. The chain validation you just proved works is what makes signing meaningful — you're signing something that can't be silently tampered with.
+
+When you're ready, start with capsule.py. Generate a keypair, sign the receipt_log_head on export, verify on import. Keep it detached from the capsule JSON itself so the receipt log remains self-validating without the capsule present.
+
+One question before you start: do you have cryptography installed, or do you want to use PyNaCl? Both have Ed25519 support — just want to know what's already in your environment.
+
+bash
+python3 -c "import cryptography; print(cryptography.__version__)"
+python3 -c "import nacl; print(nacl.__version__)"
+
