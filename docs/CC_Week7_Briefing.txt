@@ -1,0 +1,339 @@
+﻿COMPATIBLE COMPANION
+Week 7 Briefing — AI to AI
+From: Claude (Architecture Lead)
+To: Antigravity (Implementation Lead)
+Full editorial + self-testing authority granted
+
+0. State of the Stack
+Antigravity — here is what is frozen. Do not touch these. Build on them.
+
+✓
+Weeks 1–2 · State machine + receipt chain
+PLAN→ACT→VERIFY→COMMIT, chained SHA3-256 log, corruption detection, deterministic replay
+✓
+Week 2 · Ed25519 identity
+KeyManager session-resident key, zero on close, verify_payload tamper rejection
+✓
+Week 2 · Capsule portability
+export_capsule / import_capsule, conflict resolution keep_local, cross-runtime roundtrip
+✓
+Week 3 · TTL + canon + policy
+ttl_expires_at ISO filter, canon immutability in Verifier, AST whitelist policy evaluator
+✓
+Weeks 4–5 · Profile + ZW + tools
+Named scopes, provenance, ZW parser, ToolGateway allowlist, Verifier tool receipt check
+✓
+Week 6 · MCP adapter
+build_server → (server, handlers), mem_find / mem_store / run_cycle / capsule_export tools
+✓
+Stress harness
+26/27 isolated subprocess checks passing, 5 active corruption injections caught
+
+Two known gaps carried into Week 7:   G1 · TTL hard-deletes expired units — provenance trail is lost (spec violation)   G2 · export_capsule does not sign the capsule — tamper detection is deferred
+
+
+1. Week 7 Scope — Three Proofs
+Week 7 closes the two known gaps and adds the first session-continuity proof. Total: 3 new tests, 28 pytest tests green.
+
+#
+Proof
+Acceptance criterion
+File
+P1
+TTL tombstone (gap G1)
+Expired unit is never hard-deleted. Raw DB query finds the row. mem_find hides it. Provenance table has the entry.
+memory.py
+P2
+Signed capsule (gap G2)
+export_capsule signs with KeyManager. import_capsule verifies. Tampered signature raises before any DB write. Stress harness deferred test now passes.
+capsule.py
+P3
+Session continuity
+Write a unit in session 1. Instantiate a fresh AgentRuntime on the same DB in session 2. Unit is present without replay. This is the core value prop.
+runtime.py + test
+
+
+2. P1 — TTL Tombstone Fix
+The current implementation calls DELETE on expired units at some point. That is a spec violation. Expired units must remain in the database as tombstones — mem_find ignores them, but the provenance trail must be intact.
+
+2.1 Find and Remove the Hard Delete
+Search memory.py for any DELETE statement that references ttl_expires_at or any cleanup/prune function. Remove it. If there is no DELETE, the bug is in a trigger or in how staging clears rows. Find it and kill it.
+
+# BANNED — never hard-delete based on TTL
+cursor.execute('DELETE FROM units WHERE ttl_expires_at < ?', (now,))  # ← remove this
+
+# CORRECT — TTL is a filter, not a deletion trigger
+# mem_find already has:
+# AND (ttl_expires_at IS NULL OR ttl_expires_at > ?)
+# That is the only TTL enforcement needed.
+
+2.2 Acceptance Test (Test 26)
+def test_26_ttl_tombstone_not_hard_deleted():
+    """Expired unit is invisible to mem_find but present in raw DB."""
+    import tempfile, os, sqlite3
+    from datetime import datetime, timezone, timedelta
+    from cc.runtime import AgentRuntime
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db = os.path.join(tmp, 'test26.db')
+        rt = AgentRuntime(db_path=db, log_path=os.path.join(tmp, 'r.jsonl'))
+        expired = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+        rt.run_cycle(
+            plan={'action':'mem_store','unit_id':'u_tomb','scope':'style',
+                  'tags':[],'body':{'summary':'ephemeral'},'ttl_expires_at':expired},
+            act_fn=lambda p: {**p}, invariants=[],
+        )
+        # mem_find must not return it
+        units = rt.memory.mem_find(scope='style')
+        assert not any(u.get('unit_id')=='u_tomb' for u in units), 'must be invisible'
+
+        # Raw DB query must find it (tombstone intact)
+        conn = sqlite3.connect(db)
+        cols = [r[1] for r in conn.execute('PRAGMA table_info(units)').fetchall()]
+        id_col = 'unit_id' if 'unit_id' in cols else 'id'
+        rows = conn.execute(f'SELECT {id_col} FROM units WHERE {id_col}=?',
+                            ('u_tomb',)).fetchall()
+        conn.close()
+        assert rows, 'expired unit must be tombstoned, not hard-deleted'
+
+        # Provenance must have a record
+        conn = sqlite3.connect(db)
+        prov = conn.execute(
+            'SELECT op FROM provenance WHERE unit_id=?', ('u_tomb',)
+        ).fetchall()
+        conn.close()
+        assert prov, 'provenance must record the write even if unit is expired'
+
+
+3. P2 — Signed Capsule
+export_capsule currently writes signature: null. Week 7 wires in signing. import_capsule verifies. Unsigned capsules are rejected. This closes the deferred stress harness test.
+
+3.1 export_capsule Signature
+export_capsule(db_path, capsule_path) must gain an optional key_manager parameter. If provided, sign the canonical capsule body and write the signature.
+
+def export_capsule(db_path: str, capsule_path: str,
+                   key_manager=None) -> None:
+    """
+    Export a portable capsule JSON to capsule_path.
+    If key_manager is provided, signs the canonical body (JSON bytes,
+    sorted keys) and writes the signature field.
+    If None, writes signature: null — capsule is portable but unsigned.
+    """
+    # ... build capsule dict as before ...
+
+    if key_manager is not None:
+        canonical = json.dumps(capsule, sort_keys=True).encode('utf-8')
+        capsule['signature'] = key_manager.sign(canonical)
+    else:
+        capsule['signature'] = None
+
+    with open(capsule_path, 'w') as f:
+        json.dump(capsule, f, indent=2)
+
+3.2 import_capsule Signature Verification
+def import_capsule(capsule_path: str, db_path: str,
+                   key_manager=None, conflict_strategy='keep_local') -> None:
+    """
+    Import capsule from capsule_path into db_path.
+    If key_manager provided and capsule has a signature, verify before any
+    DB write. Raise on bad or missing signature.
+    If key_manager is None, skip verification (unsigned import allowed).
+    """
+    with open(capsule_path) as f:
+        capsule = json.load(f)
+
+    if key_manager is not None:
+        sig = capsule.get('signature')
+        if not sig:
+            raise ValueError('Capsule is unsigned. Provide unsigned key_manager=None to bypass.')
+        # Verify against the canonical body (signature field excluded)
+        body = {k: v for k, v in capsule.items() if k != 'signature'}
+        canonical = json.dumps(body, sort_keys=True).encode('utf-8')
+        from cc.identity import verify_payload
+        # verify_payload raises nacl.exceptions.BadSignatureError on failure
+        vk_b64 = capsule.get('public_key')
+        if not vk_b64:
+            raise ValueError('Capsule has no public_key field — cannot verify')
+        verify_payload(canonical, sig, vk_b64)   # raises on tamper
+
+    # ... rest of import logic unchanged ...
+
+CRITICAL: export_capsule must embed the public key (vk_b64) in the capsule body BEFORE signing. The capsule must be self-verifying — the recipient needs the public key to check the signature. Add field: 'public_key': vk_b64 to the capsule dict before signing.
+
+3.3 Acceptance Test (Test 27)
+def test_27_signed_capsule_tamper_rejected():
+    """Tampered capsule signature is rejected before any DB write."""
+    import tempfile, os, json
+    from cc.runtime import AgentRuntime
+    from cc.identity import generate_keypair, KeyManager
+    from cc.capsule import export_capsule, import_capsule
+    import shutil
+
+    with tempfile.TemporaryDirectory() as tmp:
+        sk, vk = generate_keypair()
+        key_path = os.path.join(tmp, 'id.key')
+        shutil.copy2('cc_identity.key', key_path)
+        km = KeyManager(key_path)
+
+        db1 = os.path.join(tmp, 's1.db')
+        rt1 = AgentRuntime(db_path=db1, log_path=os.path.join(tmp, 'r1.jsonl'))
+        rt1.run_cycle(
+            plan={'action':'mem_store','unit_id':'u1','scope':'core',
+                  'tags':[],'body':{'summary':'signed'}},
+            act_fn=lambda p: {**p}, invariants=[],
+        )
+        caps_path = os.path.join(tmp, 'caps.json')
+        export_capsule(db1, caps_path, key_manager=km)   # signed
+
+        # Tamper: flip one char in the signature
+        with open(caps_path) as f: caps = json.load(f)
+        sig = list(caps['signature'])
+        sig[0] = 'A' if sig[0] != 'A' else 'B'
+        caps['signature'] = ''.join(sig)
+        with open(caps_path, 'w') as f: json.dump(caps, f)
+
+        # import must raise before touching db2
+        db2 = os.path.join(tmp, 's2.db')
+        import pytest
+        with pytest.raises(Exception):
+            import_capsule(caps_path, db2, key_manager=km)
+
+        # db2 must not exist or be empty (no write happened)
+        assert not os.path.exists(db2) or os.path.getsize(db2) == 0, \
+            'DB must not be written on tamper rejection'
+
+
+4. P3 — Session Continuity
+This is the core value proposition of Compatible Companion. A unit written in session 1 must be present in session 2 without replay. The companion accumulates across separate AgentRuntime instantiations on the same DB. This requires no new code — it is a proof that the existing architecture works correctly. Write the test.
+
+4.1 Acceptance Test (Test 28)
+def test_28_session_continuity():
+    """
+    Session 2 sees session 1 writes without replay.
+    This is the core CC value proposition:
+    interaction state persists across runtime instantiations.
+    """
+    import tempfile, os
+    from cc.runtime import AgentRuntime
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db  = os.path.join(tmp, 'companion.db')
+        log = os.path.join(tmp, 'receipts.jsonl')
+
+        # ── Session 1 ──────────────────────────────────────────────
+        rt1 = AgentRuntime(db_path=db, log_path=log)
+        rt1.run_cycle(
+            plan={'action':'mem_store','unit_id':'pref_voice',
+                  'scope':'style','tags':['voice'],
+                  'body':{'summary':'terse, direct, no hedging'}},
+            act_fn=lambda p: {**p}, invariants=[],
+        )
+        rt1.run_cycle(
+            plan={'action':'mem_store','unit_id':'pref_format',
+                  'scope':'style','tags':['format'],
+                  'body':{'summary':'bullet points for lists, prose otherwise'}},
+            act_fn=lambda p: {**p}, invariants=[],
+        )
+        del rt1   # session 1 ends — runtime discarded
+
+        # ── Session 2 — fresh runtime, same DB ──────────────────────
+        rt2 = AgentRuntime(db_path=db, log_path=log)
+        units = rt2.memory.mem_find(scope='style')
+        ids = [u.get('unit_id') for u in units]
+
+        assert 'pref_voice' in ids,  'session 1 voice pref must survive to session 2'
+        assert 'pref_format' in ids, 'session 1 format pref must survive to session 2'
+
+        # ── Session 3 — accumulate further ──────────────────────────
+        rt3 = AgentRuntime(db_path=db, log_path=log)
+        rt3.run_cycle(
+            plan={'action':'mem_store','unit_id':'fact_001',
+                  'scope':'core','tags':['bio'],
+                  'body':{'summary':'user works in distributed systems'}},
+            act_fn=lambda p: {**p}, invariants=[],
+        )
+        del rt3
+
+        rt4 = AgentRuntime(db_path=db, log_path=log)
+        all_units = rt4.memory.mem_find(scope='style') + rt4.memory.mem_find(scope='core')
+        all_ids = [u.get('unit_id') for u in all_units]
+        assert 'pref_voice' in all_ids,  'must accumulate across 3 sessions'
+        assert 'pref_format' in all_ids, 'must accumulate across 3 sessions'
+        assert 'fact_001' in all_ids,    'must accumulate across 3 sessions'
+
+
+5. Stress Harness — Update Deferred Test
+The stress harness has one deferred check: Capsule import: tampered signature rejected. Once P2 is implemented, replace the deferred entry in stress_harness.py with the live corruption test. The harness must reach 27/27 with no deferred items.
+
+# In stress_harness.py section 12 — REPLACE the deferred entry with:
+
+info("Injecting: tampered capsule signature")
+code = KEY_SETUP + textwrap.dedent('''
+import tempfile, os, json
+from cc.runtime import AgentRuntime
+from cc.capsule import export_capsule, import_capsule
+
+with tempfile.TemporaryDirectory() as tmp:
+    km, vk_b64, kp = _make_key(tmp)
+    db1  = os.path.join(tmp, 's1.db')
+    caps_path = os.path.join(tmp, 'caps.json')
+    rt1 = AgentRuntime(db_path=db1, log_path=os.path.join(tmp,'r1.jsonl'))
+    rt1.run_cycle(
+        plan={'action':'mem_store','unit_id':'u1','scope':'core',
+              'tags':[],'body':{'summary':'data'}},
+        act_fn=lambda p: {**p}, invariants=[],
+    )
+    export_capsule(db1, caps_path, key_manager=km)   # signed
+    with open(caps_path) as f: caps = json.load(f)
+    sig = list(caps['signature'])
+    sig[0] = 'A' if sig[0] != 'A' else 'B'
+    caps['signature'] = ''.join(sig)
+    with open(caps_path,'w') as f: json.dump(caps, f)
+    db2 = os.path.join(tmp,'s2.db')
+    try:
+        import_capsule(caps_path, db2, key_manager=km)
+        print('MISSED')
+    except Exception:
+        print('CAUGHT')
+''')
+ok_, out = run_isolated(code)
+record_corruption("Capsule import: tampered signature rejected", "CAUGHT" in out, out)
+
+
+6. Execution Order
+Do not skip steps. Each step must be green before the next.
+
+1
+Fix TTL hard-delete in memory.py. Run existing 25 tests. All must still pass.
+2
+Write Test 26 (tombstone). Run alone. Confirm it fails. Apply fix. Confirm pass.
+3
+Add public_key field to export_capsule. Add key_manager param. Wire signing.
+4
+Add key_manager param and signature verification to import_capsule.
+5
+Write Test 27 (tamper rejection). Run alone. Confirm pass.
+6
+Write Test 28 (session continuity). Run alone. Confirm pass.
+7
+Run full pytest suite: python3 -m pytest cc/tests/test_mvp.py -v — must show 28 passed, 0 warnings.
+8
+Update stress harness section 12 deferred → live tamper test. Run: python3 stress_harness.py — must show 27/27, 0 deferred.
+
+
+7. What Week 7 Does NOT Touch
+✗  State machine phases (PLAN→ACT→VERIFY→COMMIT) — frozen ✗  Receipt schema and chain hashing — frozen ✗  KeyManager internals — frozen ✗  AST whitelist policy evaluator — frozen ✗  ToolGateway and Verifier tool receipt logic — frozen ✗  MCP adapter interface — frozen ✗  TCP transport, multi-session networking — Week 8 ✗  Snapshot checkpointing / log compaction — Week 8 ✗  Key rotation — not in scope ✗  No new dependencies
+
+
+8. Acceptance Criteria
+
+python3 -m pytest cc/tests/test_mvp.py -v
+# 28 passed, 0 warnings
+
+python3 stress_harness.py
+# 27/27 — no deferred items
+
+Those two commands are the only verdict. Both must be clean before Week 8 is scoped.
+
+
+Two gaps closed. One continuity proof. Then the runtime is network-ready.

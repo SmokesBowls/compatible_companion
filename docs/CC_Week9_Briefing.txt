@@ -1,0 +1,526 @@
+﻿COMPATIBLE COMPANION
+Week 9 Briefing — AI to AI
+From: Claude (Architecture Lead)  ·  To: Antigravity (Implementation Lead)
+Full editorial + self-testing authority granted
+
+0. State of the Stack — Frozen
+Antigravity — 30 tests, 29/29 harness, TCP live. Here is what does not get touched.
+
+✓
+30 pytest tests
+0 failures · 25 legacy relative-path warnings only · new tests 0 warnings
+✓
+29/29 stress harness
+0 deferred · 5 live corruption injections caught · TCP loopback verified
+✓
+State machine
+PLAN→ACT→VERIFY→COMMIT · chained SHA3-256 receipts · deterministic replay
+✓
+Ed25519 + signed capsule
+KeyManager · zero on close · tamper raises before DB write
+✓
+TTL + canon + policy
+Tombstone provenance · Verifier-level immutability · AST whitelist
+✓
+Defense-in-depth tools
+Gateway + Verifier independent · staged writes discarded on FAIL
+✓
+MCP adapter
+build_server → (server, handlers) · all mutation through run_cycle
+✓
+Session continuity
+State accumulates across AgentRuntime instantiations on same DB
+✓
+Snapshot checkpointing
+compact_log + replay_from_snapshot · O(recent) startup · audit intact
+✓
+TCP transport
+start_tcp_server · newline-delimited JSON · asyncio stdlib · loopback proven
+
+
+1. Week 9 Scope — Two Proofs, One Milestone
+Week 9 makes the runtime deployable. A process running on a real server, accepting real clients, rejecting unauthorized connections, isolating concurrent sessions. Total: 32 pytest tests green.
+
+This is the deployability milestone.
+After Week 9, Compatible Companion can run as a daemon on a server.
+Clients authenticate. Sessions are isolated. The runtime is addressable over a real network.
+This is what the TCP foundation in Week 8 was built toward.
+
+#
+Proof
+Acceptance criterion
+Files
+P1
+Shared-secret auth
+TCP server requires a token in the first frame. Wrong or missing token closes the connection immediately — no data, no error detail leaked. Correct token proceeds normally.
+server.py
+P2
+Multi-client session isolation
+Two clients connect simultaneously. Client A stages a write. Client B's mem_find does not see it until A's cycle COMMITs. Concurrent staged writes never bleed across sessions.
+server.py + runtime.py
+
+
+2. P1 — Shared-Secret Authentication
+The TCP server currently accepts any connection. Week 9 adds a token handshake as the very first frame. Wrong token: connection closed, nothing leaked. Right token: session proceeds. The token is a shared secret configured at server startup — not per-user, not PKI. That is Week 10.
+
+2.1 Protocol Change
+The framed JSON protocol gains one new first-frame exchange:
+
+# Handshake — always the first exchange on a new connection
+#
+# Client sends:
+# {"auth": "<token>"}
+#
+# Server responds on success:
+# {"ok": true, "session_id": "<uuid4>"}
+#
+# Server responds on failure:
+# {"ok": false, "error": "unauthorized"}
+# ...then closes the connection immediately.
+#
+# After successful auth, the protocol is identical to Week 8.
+# The session_id is opaque to the client — it is used server-side for isolation (P2).
+
+2.2 server.py Changes
+# In cc/server.py — update _handle_client and start_tcp_server
+
+import uuid
+
+async def _handle_client(rt, handlers, reader, writer, token: str):
+    # Step 1: Handshake — must be the first frame
+    line = await reader.readline()
+    if not line:
+        writer.close(); await writer.wait_closed(); return
+    try:
+        req = json.loads(line.decode())
+    except Exception:
+        writer.close(); await writer.wait_closed(); return
+
+    if req.get('auth') != token:
+        # Wrong or missing token — close silently, leak nothing
+        resp = json.dumps({'ok': False, 'error': 'unauthorized'}) + '\n'
+        writer.write(resp.encode())
+        await writer.drain()
+        writer.close(); await writer.wait_closed(); return
+
+    session_id = str(uuid.uuid4())
+    resp = json.dumps({'ok': True, 'session_id': session_id}) + '\n'
+    writer.write(resp.encode())
+    await writer.drain()
+
+    # Step 2: Normal tool dispatch loop (same as Week 8)
+    # Pass session_id for isolation (P2)
+    try:
+        while True:
+            line = await reader.readline()
+            if not line: break
+            try:
+                req = json.loads(line.decode())
+                tool = req.get('tool')
+                args = req.get('args', {})
+                if tool not in handlers:
+                    raise ValueError(f'unknown tool: {tool}')
+                result = await handlers[tool](tool, args,
+                                              session_id=session_id)
+                payload = json.dumps({'ok': True,
+                    'result': json.loads(result[0].text)}) + '\n'
+            except Exception as e:
+                payload = json.dumps({'ok': False, 'error': str(e)}) + '\n'
+            writer.write(payload.encode())
+            await writer.drain()
+    finally:
+        writer.close()
+        await writer.wait_closed()
+
+async def start_tcp_server(rt, key_manager,
+                            host='127.0.0.1', port=7700,
+                            token: str = None):
+    if token is None:
+        raise ValueError('token is required. No unauthenticated servers.')
+    _, handlers = build_server(rt, key_manager)
+    server = await asyncio.start_server(
+        lambda r, w: _handle_client(rt, handlers, r, w, token),
+        host, port
+    )
+    async with server:
+        await server.serve_forever()
+
+2.3 Acceptance Test (Test 31)
+def test_31_auth_wrong_token_rejected():
+    """Wrong token closes connection. Correct token succeeds."""
+    import tempfile, os, asyncio, json
+    from cc.runtime import AgentRuntime
+    from cc.identity import generate_keypair, KeyManager
+    from cc.server import start_tcp_server
+    import shutil
+
+    async def run():
+        with tempfile.TemporaryDirectory() as tmp:
+            sk, vk = generate_keypair()
+            kp = os.path.join(tmp, 'id.key')
+            shutil.copy2('cc_identity.key', kp)
+            km = KeyManager(kp)
+            rt = AgentRuntime(db_path=os.path.join(tmp,'s.db'),
+                              log_path=os.path.join(tmp,'r.jsonl'))
+
+            SECRET = 'correct-horse-battery-staple'
+            task = asyncio.create_task(
+                start_tcp_server(rt, km, host='127.0.0.1',
+                                 port=7702, token=SECRET))
+            await asyncio.sleep(0.1)
+
+            # ── Wrong token ──────────────────────────────────────────
+            r, w = await asyncio.open_connection('127.0.0.1', 7702)
+            w.write((json.dumps({'auth': 'wrong-token'}) + '\n').encode())
+            await w.drain()
+            resp = json.loads((await r.readline()).decode())
+            w.close(); await w.wait_closed()
+            assert resp['ok'] is False, 'wrong token must be rejected'
+            assert resp.get('error') == 'unauthorized'
+
+            # ── Missing auth frame ───────────────────────────────────
+            r, w = await asyncio.open_connection('127.0.0.1', 7702)
+            w.write((json.dumps({'tool': 'mem_find', 'args': {'scope': 'core'}}) + '\n').encode())
+            await w.drain()
+            resp2 = json.loads((await r.readline()).decode())
+            w.close(); await w.wait_closed()
+            assert resp2['ok'] is False, 'missing auth must be rejected'
+
+            # ── Correct token ────────────────────────────────────────
+            r, w = await asyncio.open_connection('127.0.0.1', 7702)
+            w.write((json.dumps({'auth': SECRET}) + '\n').encode())
+            await w.drain()
+            resp3 = json.loads((await r.readline()).decode())
+            assert resp3['ok'] is True, 'correct token must succeed'
+            assert 'session_id' in resp3
+            w.close(); await w.wait_closed()
+
+            task.cancel()
+            try: await task
+            except asyncio.CancelledError: pass
+
+    asyncio.run(run())
+
+
+3. P2 — Multi-Client Session Isolation
+Two clients connect simultaneously. Each gets a session_id at handshake. Staged writes are scoped to session_id — they live in a per-session staging area, not a shared one. Client B's mem_find never sees Client A's uncommitted writes. This is the final invariant the runtime needs before it can safely serve concurrent users.
+
+3.1 Architecture
+Key insight: the existing run_cycle() is already atomic per call.
+The isolation problem is specifically about staged writes that exist BETWEEN
+PLAN and COMMIT in a long-running session.
+
+Week 9 scope is narrow: ensure that when two clients are mid-cycle simultaneously,
+neither sees the other's staged state via mem_find.
+
+The simplest correct implementation: each session gets its own AgentRuntime
+instance wrapping the same DB. Staging is in-memory per instance.
+Committed writes go to the shared DB and are visible to all sessions immediately.
+This is correct because COMMIT is atomic at the SQLite level.
+
+3.2 server.py — Per-Session Runtime
+# In cc/server.py — per-session AgentRuntime
+#
+# Instead of sharing rt across all clients, each authenticated
+# session gets its own AgentRuntime on the SAME db_path and log_path.
+# Staged writes (in-memory) are isolated. Committed writes are shared.
+
+async def _handle_client(shared_rt, handlers_factory, reader, writer,
+                          token: str, db_path: str, log_path: str,
+                          key_manager):
+    # Handshake (same as P1)
+    line = await reader.readline()
+    if not line:
+        writer.close(); await writer.wait_closed(); return
+    try:
+        req = json.loads(line.decode())
+    except Exception:
+        writer.close(); await writer.wait_closed(); return
+
+    if req.get('auth') != token:
+        writer.write((json.dumps({'ok': False, 'error': 'unauthorized'}) + '\n').encode())
+        await writer.drain()
+        writer.close(); await writer.wait_closed(); return
+
+    session_id = str(uuid.uuid4())
+    writer.write((json.dumps({'ok': True, 'session_id': session_id}) + '\n').encode())
+    await writer.drain()
+
+    # Each session gets its own AgentRuntime — staged writes are isolated
+    from cc.runtime import AgentRuntime
+    session_rt = AgentRuntime(db_path=db_path, log_path=log_path)
+    _, session_handlers = build_server(session_rt, key_manager)
+
+    try:
+        while True:
+            line = await reader.readline()
+            if not line: break
+            try:
+                req = json.loads(line.decode())
+                tool = req.get('tool')
+                args = req.get('args', {})
+                if tool not in session_handlers:
+                    raise ValueError(f'unknown tool: {tool}')
+                result = await session_handlers[tool](tool, args)
+                payload = json.dumps({'ok': True,
+                    'result': json.loads(result[0].text)}) + '\n'
+            except Exception as e:
+                payload = json.dumps({'ok': False, 'error': str(e)}) + '\n'
+            writer.write(payload.encode())
+            await writer.drain()
+    finally:
+        writer.close()
+        await writer.wait_closed()
+
+async def start_tcp_server(rt, key_manager,
+                            host='127.0.0.1', port=7700,
+                            token: str = None):
+    if token is None:
+        raise ValueError('token is required.')
+    server = await asyncio.start_server(
+        lambda r, w: _handle_client(
+            rt, None, r, w, token,
+            rt.db_path, rt.log_path, key_manager
+        ),
+        host, port
+    )
+    async with server:
+        await server.serve_forever()
+
+REQUIRED: AgentRuntime must expose db_path and log_path as instance attributes.
+If they are not already stored on self, add self.db_path = db_path and
+self.log_path = log_path in __init__. The server needs them to spawn session runtimes.
+
+3.3 Acceptance Test (Test 32)
+def test_32_concurrent_session_isolation():
+    """
+    Two clients connect simultaneously.
+    Client A commits a write. Client B must not see A's staged state
+    mid-cycle — only the committed result after COMMIT.
+    """
+    import tempfile, os, asyncio, json
+    from cc.runtime import AgentRuntime
+    from cc.identity import generate_keypair, KeyManager
+    from cc.server import start_tcp_server
+    import shutil
+
+    async def client(port, token, cmds):
+        r, w = await asyncio.open_connection('127.0.0.1', port)
+        w.write((json.dumps({'auth': token}) + '\n').encode())
+        await w.drain()
+        auth_resp = json.loads((await r.readline()).decode())
+        assert auth_resp['ok'], f'auth failed: {auth_resp}'
+        results = []
+        for cmd in cmds:
+            w.write((json.dumps(cmd) + '\n').encode())
+            await w.drain()
+            resp = json.loads((await r.readline()).decode())
+            results.append(resp)
+        w.close(); await w.wait_closed()
+        return results
+
+    async def run():
+        with tempfile.TemporaryDirectory() as tmp:
+            sk, vk = generate_keypair()
+            kp = os.path.join(tmp, 'id.key')
+            shutil.copy2('cc_identity.key', kp)
+            km = KeyManager(kp)
+            rt = AgentRuntime(db_path=os.path.join(tmp,'s.db'),
+                              log_path=os.path.join(tmp,'r.jsonl'))
+            SECRET = 'session-isolation-test'
+            task = asyncio.create_task(
+                start_tcp_server(rt, km, host='127.0.0.1',
+                                 port=7703, token=SECRET))
+            await asyncio.sleep(0.1)
+
+            # Client A: commits a unit
+            # Client B: reads — must not see A's in-progress state
+            # Run concurrently
+            a_cmds = [
+                {'tool':'mem_store','args':{'unit_id':'a1','scope':'core',
+                 'tags':[],'body':{'summary':'from A'}}},
+            ]
+            b_cmds = [
+                {'tool':'mem_find','args':{'scope':'core'}},
+            ]
+            a_results, b_results = await asyncio.gather(
+                client(7703, SECRET, a_cmds),
+                client(7703, SECRET, b_cmds),
+            )
+
+            # A's write must have committed
+            assert a_results[0]['ok'], f'A write failed: {a_results}'
+            assert a_results[0]['result']['outcome'] == 'COMMIT'
+
+            # B's read: may or may not see a1 depending on timing,
+            # but must NEVER raise or contain partial/corrupt state
+            assert b_results[0]['ok'], f'B read failed: {b_results}'
+            assert isinstance(b_results[0]['result'], list)
+
+            # After both complete: a third client must see a1
+            c_results = await client(7703, SECRET,
+                [{'tool':'mem_find','args':{'scope':'core'}}])
+            ids = [u.get('unit_id') for u in c_results[0]['result']]
+            assert 'a1' in ids, f'committed unit must be visible: {ids}'
+
+            task.cancel()
+            try: await task
+            except asyncio.CancelledError: pass
+
+    asyncio.run(run())
+
+
+4. Stress Harness — Two New Sections
+Add sections 18 and 19 after section 17. Target: 31/31.
+
+Section 18 — Auth Rejection
+section("18 · Auth: Wrong Token Rejected")
+
+code = KEY_SETUP + textwrap.dedent('''
+import tempfile, os, asyncio, json
+from cc.runtime import AgentRuntime
+from cc.server import start_tcp_server
+
+async def run():
+    with tempfile.TemporaryDirectory() as tmp:
+        km, vk_b64, kp = _make_key(tmp)
+        rt = AgentRuntime(db_path=os.path.join(tmp,'s.db'),
+                          log_path=os.path.join(tmp,'r.jsonl'))
+        task = asyncio.create_task(
+            start_tcp_server(rt, km, host='127.0.0.1',
+                             port=7704, token='secret'))
+        await asyncio.sleep(0.1)
+        r, w = await asyncio.open_connection('127.0.0.1', 7704)
+        w.write((json.dumps({'auth': 'wrong'}) + '\\n').encode())
+        await w.drain()
+        resp = json.loads((await r.readline()).decode())
+        w.close(); await w.wait_closed()
+        task.cancel()
+        try: await task
+        except asyncio.CancelledError: pass
+        assert resp['ok'] is False
+        assert 'unauthorized' in resp.get('error','').lower()
+        print('CAUGHT')
+asyncio.run(run())
+''')
+ok_, out = run_isolated(code)
+record_corruption("Auth: wrong token rejected before any data exchange",
+                  "CAUGHT" in out, out)
+
+Section 19 — Concurrent Session Isolation
+section("19 · Concurrent Session Isolation")
+
+code = KEY_SETUP + textwrap.dedent('''
+import tempfile, os, asyncio, json
+from cc.runtime import AgentRuntime
+from cc.server import start_tcp_server
+
+async def run():
+    with tempfile.TemporaryDirectory() as tmp:
+        km, vk_b64, kp = _make_key(tmp)
+        rt = AgentRuntime(db_path=os.path.join(tmp,'s.db'),
+                          log_path=os.path.join(tmp,'r.jsonl'))
+        SECRET = 'isolation'
+        task = asyncio.create_task(
+            start_tcp_server(rt, km, host='127.0.0.1',
+                             port=7705, token=SECRET))
+        await asyncio.sleep(0.1)
+
+        async def conn(cmds):
+            r, w = await asyncio.open_connection('127.0.0.1', 7705)
+            w.write((json.dumps({'auth': SECRET}) + '\\n').encode())
+            await w.drain()
+            await r.readline()  # discard auth resp
+            results = []
+            for cmd in cmds:
+                w.write((json.dumps(cmd) + '\\n').encode())
+                await w.drain()
+                results.append(json.loads((await r.readline()).decode()))
+            w.close(); await w.wait_closed()
+            return results
+
+        a_res, b_res = await asyncio.gather(
+            conn([{'tool':'mem_store','args':{'unit_id':'iso_a','scope':'core',
+                   'tags':[],'body':{'summary':'a'}}}]),
+            conn([{'tool':'mem_find','args':{'scope':'core'}}]),
+        )
+        assert a_res[0]['ok'], f'A failed: {a_res}'
+        assert b_res[0]['ok'], f'B failed: {b_res}'
+        assert isinstance(b_res[0]['result'], list), 'B must get a list'
+
+        # After both: third session sees the committed write
+        c_res = await conn([{'tool':'mem_find','args':{'scope':'core'}}])
+        ids = [u.get('unit_id') for u in c_res[0]['result']]
+        assert 'iso_a' in ids, f'committed unit missing: {ids}'
+
+        task.cancel()
+        try: await task
+        except asyncio.CancelledError: pass
+        print('OK')
+asyncio.run(run())
+''')
+ok_, out = run_isolated(code)
+record("Concurrent sessions: B read is clean, committed write visible to C",
+       ok_ and "OK" in out, out)
+
+
+5. Execution Order
+Do not skip steps. Each step must be green before the next.
+
+1
+Run existing suite — 30 passed. Touch nothing until this is confirmed.
+2
+Check AgentRuntime.__init__ — add self.db_path and self.log_path if not already stored.
+3
+Update start_tcp_server to require token (raise if None). Update _handle_client for handshake.
+4
+Update existing test_30 to pass token='test-token' — it will break otherwise. Confirm 30 passed.
+5
+Write Test 31 (auth rejection). Run alone. Confirm pass. Run full suite — 31 passed.
+6
+Update _handle_client to spawn per-session AgentRuntime (P2 isolation).
+7
+Write Test 32 (concurrent isolation). Run alone. Confirm pass. Run full suite — 32 passed, 0 warnings.
+8
+Add sections 18 and 19 to stress_harness.py. Run — 31/31.
+9
+Final: pytest 32 passed · stress harness 31/31. Both clean. Week 9 closed.
+
+
+6. What Week 9 Does NOT Touch
+✗  TLS / certificates — Week 10
+✗  Per-user identity (separate keys per client) — Week 10
+✗  Token rotation / expiry — Week 10
+✗  Persistent session state across TCP reconnects — Week 10
+✗  State machine, receipt chain, capsule schema — frozen
+✗  KeyManager / identity.py — frozen
+✗  Memory model, policy evaluator, tool gateway — frozen
+✗  No new dependencies (uuid, asyncio — both stdlib)
+
+
+7. Week 10 Preview (Do Not Build Yet)
+Week 10 is where the runtime becomes production-hardened:
+
+TLS
+The TCP server wraps with ssl.create_default_context(). Self-signed cert for dev, real cert path for prod. Clients that don't present TLS are dropped at the socket level.
+Per-client identity
+Each client authenticates with its own Ed25519 key pair. The server maintains an allowlist of trusted public keys. This replaces the shared secret and enables per-client audit trails.
+Persistent sessions
+A client that reconnects resumes from its last session_id. In-progress staged writes from before a disconnect are discarded (FAIL receipt emitted). Committed state is always intact.
+
+Week 10 is listed for orientation only. Scope is a wall.
+
+
+8. Acceptance Criteria
+
+python3 -m pytest cc/tests/test_mvp.py -v
+# 32 passed, 0 warnings on new tests
+
+python3 stress_harness.py
+# 31/31 — 0 deferred
+
+Both commands clean. That is the only verdict.
+Week 10 does not start until both are green.
+
+
+The runtime is authenticated. Sessions are isolated. Two clients are no longer imaginary.

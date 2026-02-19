@@ -1,0 +1,151 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.11, pytest-9.0.2, pluggy-1.5.0 -- /home/burdens/miniconda3/bin/python3
+cachedir: .pytest_cache
+rootdir: /home/burdens/compatible
+plugins: cov-7.0.0, asyncio-1.3.0, anyio-4.12.1
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 32 items
+
+cc/tests/test_mvp.py::test_zw_block_canonicalization PASSED
+cc/tests/test_mvp.py::test_full_cycle_success [LOG] Appended rcpt_1af058ca | Log Head: a6e9cdd1649d...
+PASSED
+cc/tests/test_mvp.py::test_verify_failure [LOG] Appended rcpt_91f995d0 | Log Head: b3cffd006e1b...
+PASSED
+cc/tests/test_mvp.py::test_deterministic_replay [LOG] Appended rcpt_5c396c17 | Log Head: e79966e92ea5...
+[LOG] Appended rcpt_5f4336d7 | Log Head: 343b0c4b5618...
+[REPLAY] Replaying test_receipts.jsonl...
+[REPLAY] Applied snap_fe498fa8 | State Hash: d2c3fc0a4c99...
+[REPLAY] Applied snap_f9e54b09 | State Hash: 8781bbd5ccd3...
+[REPLAY] Finished. Final State Hash: 8781bbd5ccd3
+SUCCESS: State hashes match exactly! Deterministic replay confirmed.
+Original:  8781bbd5ccd39db8f75412fdaf4e9918598ea250d4cc6b7c4f0e053e0f26ae59
+Replayed:  8781bbd5ccd39db8f75412fdaf4e9918598ea250d4cc6b7c4f0e053e0f26ae59
+PASSED
+cc/tests/test_mvp.py::test_capsule_export [LOG] Appended rcpt_e9586faa | Log Head: 4d71872f572a...
+PASSED
+cc/tests/test_mvp.py::test_sign_and_verify PASSED
+cc/tests/test_mvp.py::test_tampered_sig_rejected PASSED
+cc/tests/test_mvp.py::test_capsule_export_import_roundtrip [LOG] Appended rcpt_8ec6adb8 | Log Head: 163a0f65a6dd...
+PASSED
+cc/tests/test_mvp.py::test_capsule_import_rejects_bad_sig [LOG] Appended rcpt_c64958d4 | Log Head: 59a20d020de4...
+PASSED
+cc/tests/test_mvp.py::test_conflict_keep_local PASSED
+cc/tests/test_mvp.py::test_12_ttl_unit_invisible_after_expiry PASSED
+cc/tests/test_mvp.py::test_13_ttl_survives_capsule_boundary PASSED
+cc/tests/test_mvp.py::test_14_canon_scope_immutable [LOG] Appended rcpt_0382675a | Log Head: b71b982d5511...
+[LOG] Appended rcpt_e690c728 | Log Head: aeddcc21ce84...
+PASSED
+cc/tests/test_mvp.py::test_15_policy_rule_violation_blocks_commit [LOG] Appended rcpt_cab2bc4b | Log Head: 107b986fde86...
+[LOG] Appended rcpt_67f5d976 | Log Head: 63a37e50e94f...
+PASSED
+cc/tests/test_mvp.py::test_corrupted_replay [LOG] Appended rcpt_94b6577e | Log Head: b51a22dd4055...
+[LOG] Appended rcpt_45160ac9 | Log Head: 7ef01ce9966e...
+[REPLAY] Replaying test_receipts.jsonl...
+[REPLAY] Applied snap_448822f2 | State Hash: d2c3fc0a4c99...
+PASSED
+cc/tests/test_mvp.py::test_16_zw_block_deterministic_hash PASSED
+cc/tests/test_mvp.py::test_17_style_profile_write_is_auditable [LOG] Appended rcpt_0c4a0e80 | Log Head: ca7caa3a7961...
+[LOG] Appended rcpt_df8ee6a3 | Log Head: 438753116ade...
+PASSED
+cc/tests/test_mvp.py::test_18_allowed_tool_call_commits [LOG] Appended rcpt_80a6c836 | Log Head: 0709093cd479...
+PASSED
+cc/tests/test_mvp.py::test_19_gateway_blocks_disallowed_host [LOG] Appended rcpt_2a10b904 | Log Head: 6b9a2ea419af...
+PASSED
+cc/tests/test_mvp.py::test_20_verifier_catches_unauthorized_call [LOG] Appended rcpt_90e761c3 | Log Head: b3202191ea91...
+PASSED
+cc/tests/test_mvp.py::test_21_staged_writes_discarded_on_tool_violation [LOG] Appended rcpt_89d25163 | Log Head: 970e14fd3362...
+PASSED
+cc/tests/test_mvp.py::test_22_ast_whitelist_blocks_injection PASSED
+cc/tests/test_mvp.py::test_23_key_manager_session_resident PASSED
+cc/tests/test_mvp.py::test_24_mcp_mem_find_returns_results PASSED
+cc/tests/test_mvp.py::test_25_mcp_mem_store_full_cycle [LOG] Appended rcpt_af0895b4 | Log Head: b64f043db512...
+PASSED
+cc/tests/test_mvp.py::test_26_ttl_tombstone_not_hard_deleted [LOG] Appended rcpt_8e6ffaa2 | Log Head: 066c6288bfd3...
+PASSED
+cc/tests/test_mvp.py::test_27_signed_capsule_tamper_rejected [LOG] Appended rcpt_c7cf8f91 | Log Head: 4cdc005c8114...
+PASSED
+cc/tests/test_mvp.py::test_28_session_continuity [LOG] Appended rcpt_2d8a7205 | Log Head: 65612300a224...
+[LOG] Appended rcpt_1e84a97b | Log Head: c71113080733...
+[LOG] Appended rcpt_a95aa279 | Log Head: 59e5f9c63284...
+PASSED
+cc/tests/test_mvp.py::test_29_snapshot_checkpoint_replay [LOG] Appended rcpt_41b3312e | Log Head: 32d71a1b8549...
+[LOG] Appended rcpt_99f9bc78 | Log Head: 0fdf243defec...
+[LOG] Appended rcpt_8e010467 | Log Head: a08fba9c0c8e...
+[LOG] Appended rcpt_fc5233ec | Log Head: a1cae88bf26e...
+[REPLAY] Replaying /tmp/tmp59admpia/main.jsonl...
+[REPLAY] Applied snap_5bd11e6d | State Hash: 155dceed749d...
+[REPLAY] Applied snap_a13a12a1 | State Hash: d7df7077f553...
+[REPLAY] Applied snap_1dfc1e76 | State Hash: fe4335ed681d...
+[REPLAY] Applied snap_1ef06ad4 | State Hash: 03850d7ae1cc...
+[REPLAY] Finished. Final State Hash: 03850d7ae1cc
+PASSED
+cc/tests/test_mvp.py::test_30_tcp_transport_mem_find [LOG] Appended rcpt_a458d18d | Log Head: acc626ac5ccd...
+[TCP] Server listening on ('127.0.0.1', 7710)
+PASSED
+cc/tests/test_mvp.py::test_31_auth_wrong_token_rejected [TCP] Server listening on ('127.0.0.1', 7711)
+PASSED
+cc/tests/test_mvp.py::test_32_concurrent_session_isolation [TCP] Server listening on ('127.0.0.1', 7712)
+[LOG] Appended rcpt_78bc82aa | Log Head: 8140184f750d...
+PASSED
+
+=============================== warnings summary ===============================
+cc/tests/test_mvp.py::test_full_cycle_success
+cc/tests/test_mvp.py::test_verify_failure
+cc/tests/test_mvp.py::test_deterministic_replay
+cc/tests/test_mvp.py::test_capsule_export
+cc/tests/test_mvp.py::test_capsule_export_import_roundtrip
+cc/tests/test_mvp.py::test_capsule_import_rejects_bad_sig
+cc/tests/test_mvp.py::test_corrupted_replay
+  /home/burdens/compatible/cc/runtime.py:41: RuntimeWarning: Relative db_path 'test_memory.db' detected. Recommended: '/home/burdens/.compatible/companion.db'
+    warnings.warn(f"Relative db_path '{db_path}' detected. Recommended: '{default_db}'", RuntimeWarning)
+
+cc/tests/test_mvp.py::test_full_cycle_success
+cc/tests/test_mvp.py::test_verify_failure
+cc/tests/test_mvp.py::test_deterministic_replay
+cc/tests/test_mvp.py::test_capsule_export
+cc/tests/test_mvp.py::test_capsule_export_import_roundtrip
+cc/tests/test_mvp.py::test_capsule_import_rejects_bad_sig
+cc/tests/test_mvp.py::test_corrupted_replay
+  /home/burdens/compatible/cc/runtime.py:43: RuntimeWarning: Relative log_path 'test_receipts.jsonl' detected. Recommended: '/home/burdens/.compatible/receipts.jsonl'
+    warnings.warn(f"Relative log_path '{log_path}' detected. Recommended: '{default_log}'", RuntimeWarning)
+
+cc/tests/test_mvp.py::test_deterministic_replay
+  /home/burdens/compatible/cc/runtime.py:41: RuntimeWarning: Relative db_path 'replay_memory.db' detected. Recommended: '/home/burdens/.compatible/companion.db'
+    warnings.warn(f"Relative db_path '{db_path}' detected. Recommended: '{default_db}'", RuntimeWarning)
+
+cc/tests/test_mvp.py::test_capsule_export_import_roundtrip
+cc/tests/test_mvp.py::test_capsule_import_rejects_bad_sig
+  /home/burdens/compatible/cc/runtime.py:41: RuntimeWarning: Relative db_path 'test_memory2.db' detected. Recommended: '/home/burdens/.compatible/companion.db'
+    warnings.warn(f"Relative db_path '{db_path}' detected. Recommended: '{default_db}'", RuntimeWarning)
+
+cc/tests/test_mvp.py::test_capsule_export_import_roundtrip
+cc/tests/test_mvp.py::test_capsule_import_rejects_bad_sig
+  /home/burdens/compatible/cc/runtime.py:43: RuntimeWarning: Relative log_path 'test_receipts2.jsonl' detected. Recommended: '/home/burdens/.compatible/receipts.jsonl'
+    warnings.warn(f"Relative log_path '{log_path}' detected. Recommended: '{default_log}'", RuntimeWarning)
+
+cc/tests/test_mvp.py::test_conflict_keep_local
+  /home/burdens/compatible/cc/runtime.py:41: RuntimeWarning: Relative db_path 'local.db' detected. Recommended: '/home/burdens/.compatible/companion.db'
+    warnings.warn(f"Relative db_path '{db_path}' detected. Recommended: '{default_db}'", RuntimeWarning)
+
+cc/tests/test_mvp.py::test_conflict_keep_local
+  /home/burdens/compatible/cc/runtime.py:43: RuntimeWarning: Relative log_path 'local.jsonl' detected. Recommended: '/home/burdens/.compatible/receipts.jsonl'
+    warnings.warn(f"Relative log_path '{log_path}' detected. Recommended: '{default_log}'", RuntimeWarning)
+
+cc/tests/test_mvp.py::test_conflict_keep_local
+  /home/burdens/compatible/cc/runtime.py:41: RuntimeWarning: Relative db_path 'remote.db' detected. Recommended: '/home/burdens/.compatible/companion.db'
+    warnings.warn(f"Relative db_path '{db_path}' detected. Recommended: '{default_db}'", RuntimeWarning)
+
+cc/tests/test_mvp.py::test_conflict_keep_local
+  /home/burdens/compatible/cc/runtime.py:43: RuntimeWarning: Relative log_path 'remote.jsonl' detected. Recommended: '/home/burdens/.compatible/receipts.jsonl'
+    warnings.warn(f"Relative log_path '{log_path}' detected. Recommended: '{default_log}'", RuntimeWarning)
+
+cc/tests/test_mvp.py::test_corrupted_replay
+  /home/burdens/compatible/cc/runtime.py:41: RuntimeWarning: Relative db_path 'corrupt_replay.db' detected. Recommended: '/home/burdens/.compatible/companion.db'
+    warnings.warn(f"Relative db_path '{db_path}' detected. Recommended: '{default_db}'", RuntimeWarning)
+
+cc/tests/test_mvp.py::test_corrupted_replay
+  /home/burdens/compatible/cc/runtime.py:43: RuntimeWarning: Relative log_path 'corrupt_replay.jsonl' detected. Recommended: '/home/burdens/.compatible/receipts.jsonl'
+    warnings.warn(f"Relative log_path '{log_path}' detected. Recommended: '{default_log}'", RuntimeWarning)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================= 32 passed, 25 warnings in 2.12s ========================

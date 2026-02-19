@@ -1,0 +1,331 @@
+﻿COMPATIBLE COMPANION
+Week 4 Briefing — AI to AI
+From: Claude (Architecture Lead)
+To: Antigravity (Implementation Lead)
+Full editorial + self-testing authority granted
+
+0. State of the Stack
+This is what is live and frozen. Do not touch these. Build on them.
+
+Stage 1 (Week 1) — 5 tests
+PLAN→ACT→VERIFY→COMMIT state machine, chained receipt log, deterministic replay, capsule export (unsigned)
+Stage 2 (Week 1.5 + 2) — 11 tests
+identity.py with PyNaCl Ed25519, detached signatures on log head, capsule export/import with signature verification, cross-runtime roundtrip, conflict detection (keep_local), tamper rejection
+Stage 2 (Week 3) — 15 tests
+TTL enforcement (mem_find filter, portability across capsule boundary), canon immutability enforced at Verifier level, sandboxed policy_rules table. Python 3.13 clean, 0 warnings.
+
+Week 4 adds four deliverables. Each has exactly one proof test. No test = not done.
+
+1. The Goal (One Sentence)
+Profile state is not special. It goes through the same pipeline as everything else. No shortcuts.
+
+That sentence is the entire architectural constraint for this week. Every implementation decision flows from it. If you find yourself writing a direct setter that bypasses run_cycle(), that is the wrong path.
+
+2. The Four Deliverables
+
+#
+File
+What it proves
+D1
+zw_block.py
+ZW block parses to deterministic canonical bytes. Hash is stable across runs and runtimes. Unknown lines preserved, not errored.
+D2
+memory.py
+Named profile scopes (core, style, work, canon) are first-class fields — not special handlers. Scope is a value.
+D3
+runtime.py
+Profile writes enter at PLAN. No direct setter methods that bypass the state machine.
+D4
+provenance table
+Persona drift is auditable: query provenance WHERE scope = 'style' ORDER BY ts. No new infrastructure — already exists.
+
+3. zw_block.py — Standalone ZW Block Parser
+3.1 Format Specification
+A ZW block is a plain-text format with three regions:
+    • Header line — exactly ZW[<type>] where type is one or more alphanumeric/underscore chars.
+    • @meta lines — lines starting with '@meta ' followed by 'key: value'. Key is alphanumeric/underscore. Value is stripped of leading/trailing whitespace.
+    • Section body — all remaining lines after the last @meta line (or after the header if no @meta lines). Preserved verbatim. Unknown/unrecognized lines in this region are preserved, not errored.
+
+Example input:
+ZW[profile]
+@meta scope: style
+@meta author: companion
+
+voice: warm, direct
+unknown_future_key: some value
+# this line is preserved as-is
+3.2 Canonical Bytes Construction
+Canonical bytes are the deterministic serialization used for hashing. Rules, in order:
+    • Emit header: ZW[{type}]\n (normalized, strip surrounding whitespace from type).
+    • Sort @meta pairs alphabetically by key (case-sensitive). Emit each as @meta {key}: {value}\n.
+    • Emit section body lines verbatim, one per line, with \n. Strip trailing whitespace from each line. Do not strip leading whitespace.
+    • Encode the result as UTF-8. Strip trailing whitespace/newlines from the final byte sequence.
+    • Hash: SHA3-256 (hashlib.sha3_256 — stdlib, no new deps).
+3.3 Public API — Exactly Two Functions
+def parse_zw_block(text: str) -> dict:
+    """
+    Parse a ZW block string.
+
+    Returns:
+        {
+            'block_type': str,           # e.g. 'profile'
+            'meta': dict[str, str],      # @meta key/value pairs
+            'body_lines': list[str],     # section body, verbatim
+        }
+
+    Raises:
+        ValueError  if the first line is not a valid ZW[...] header.
+    """
+
+def canonical_bytes(parsed: dict) -> tuple[bytes, str]:
+    """
+    Produce deterministic canonical bytes and hash from a parsed block.
+
+    Returns:
+        (canonical_bytes: bytes, sha3_256_hex: str)
+
+    Determinism guarantee: given the same logical content,
+    canonical_bytes() produces identical output across Python versions,
+    operating systems, and time zones.
+    """
+3.4 Design Constraints
+No EngAIn imports. No external dependencies. stdlib only. If someone who has never heard of ZW reads the file, they can implement a compatible parser from the code alone — the comments must make the format self-evident.
+
+4. memory.py — Named Profile Scopes
+4.1 The Four Scopes
+
+Scope
+Writable
+Notes
+core
+Yes
+Core identity facts. Mutable. Provenance tracked.
+style
+Yes
+Persona/voice preferences. Mutable. Primary drift audit target.
+work
+Yes
+Task context, current objectives. Mutable.
+canon
+No (after first commit)
+Locked in Week 3. Immutability enforced by Verifier. No change here.
+
+Scope is just the 'scope' field on a units row. There is no scope-specific handler code, no scope enum, no special dispatch. The Verifier already enforces canon. The TTL filter already applies to all scopes. Nothing new is needed in memory.py for the other three scopes to work — they already work.
+
+The only memory.py change in Week 4: accept a ZW-parsed block dict as an alternative input shape to mem_store's body parameter. This is a thin adapter, not a new code path. The storage logic is unchanged.
+4.2 mem_store ZW Input (Optional Adapter)
+# Existing signature (Week 3, unchanged):
+def mem_store(unit_id, scope, body, tags=None, ttl_expires_at=None) -> str:
+    ...
+
+# Week 4 addition — thin wrapper only:
+def mem_store_zw(zw_text: str, unit_id: str, ttl_expires_at: str = None) -> str:
+    """
+    Parse a ZW block, extract scope from @meta, call mem_store.
+    Raises ValueError if block has no @meta scope line.
+
+    This is a convenience adapter. It does not change mem_store's logic.
+    The block's canonical hash is stored in body['zw_hash'] for provenance.
+    """
+    from cc.zw_block import parse_zw_block, canonical_bytes
+    parsed = parse_zw_block(zw_text)
+    scope = parsed['meta'].get('scope')
+    if not scope:
+        raise ValueError('ZW block must have @meta scope line')
+    _, block_hash = canonical_bytes(parsed)
+    body = {'meta': parsed['meta'], 'body_lines': parsed['body_lines'],
+            'zw_hash': block_hash}
+    return self.mem_store(unit_id, scope, body, ttl_expires_at=ttl_expires_at)
+
+5. runtime.py — No Direct Setters
+This section has almost no new code. It is a constraint.
+
+Profile writes enter at PLAN like any other write. The act_fn receives the plan, produces the result. The Verifier evaluates it. The COMMIT persists it to provenance. There is no set_style(), no set_core(), no shortcut path.
+
+The correct call pattern for a profile write:
+# CORRECT — goes through the full state machine
+result = rt.run_cycle(
+    plan={
+        'action': 'mem_store',
+        'unit_id': 'style_voice',
+        'scope': 'style',
+        'tags': ['voice'],
+        'body': {'summary': 'warm, direct'}
+    },
+    act_fn=lambda plan: plan,
+    invariants=[],
+)
+
+# WRONG — bypasses state machine, violates the architecture
+# companion.set_style('warm, direct')   <-- do not write this
+# rt.mem_store.mem_store(...)            <-- not wrong, but don't expose it
+#                                             as the profile write path
+
+6. Provenance — Drift Audit (No New Code)
+The provenance table was created in Week 1. It already records every commit. The drift audit is a query, not a feature.
+
+To audit style drift — ordered list of every style write, oldest first:
+SELECT unit_id, body, ts, receipt_hash
+FROM provenance
+WHERE scope = 'style'
+ORDER BY ts ASC;
+
+If the provenance table does not currently store scope as a column, add it during the COMMIT phase when you write to provenance. This is one line, not a schema migration — add the column if it does not exist (same pattern as ttl_expires_at in Week 3).
+Expired units stay in units. Committed writes stay in provenance. Neither table is ever hard-deleted. That is what makes the audit possible.
+
+7. The Two New Tests
+Test 16 — ZW Block Canonical Bytes Are Deterministic
+def test_16_zw_block_deterministic_hash():
+    """
+    ZW block parses to deterministic canonical bytes.
+    Hash is stable across runs.
+    Unknown lines in the body are preserved.
+    """
+    from cc.zw_block import parse_zw_block, canonical_bytes
+
+    block_text = (
+        'ZW[profile]\n'
+        '@meta scope: style\n'
+        '@meta author: companion\n'
+        '\n'
+        'voice: warm, direct\n'
+        'unknown_future_key: preserved as-is\n'
+    )
+
+    # Parse twice — must produce identical canonical bytes
+    parsed_a = parse_zw_block(block_text)
+    parsed_b = parse_zw_block(block_text)
+    cb_a, hash_a = canonical_bytes(parsed_a)
+    cb_b, hash_b = canonical_bytes(parsed_b)
+
+    assert cb_a == cb_b, 'canonical bytes must be identical across parses'
+    assert hash_a == hash_b, 'hash must be stable'
+    assert len(hash_a) == 64, 'SHA3-256 hex digest is 64 chars'
+
+    # @meta keys are sorted — author before scope alphabetically
+    # (no: 'a' < 's', so author comes first)
+    canon_str = cb_a.decode('utf-8')
+    assert canon_str.startswith('ZW[profile]'), 'header must be first line'
+    author_pos = canon_str.index('@meta author')
+    scope_pos  = canon_str.index('@meta scope')
+    assert author_pos < scope_pos, '@meta keys must be sorted alphabetically'
+
+    # Unknown body line must be preserved
+    assert 'unknown_future_key: preserved as-is' in canon_str, \
+        'unknown body lines must be preserved, not errored'
+
+    # Parse with different @meta order — hash must still match
+    block_reordered = (
+        'ZW[profile]\n'
+        '@meta author: companion\n'   # reversed order vs block_text
+        '@meta scope: style\n'
+        '\n'
+        'voice: warm, direct\n'
+        'unknown_future_key: preserved as-is\n'
+    )
+    parsed_c = parse_zw_block(block_reordered)
+    _, hash_c = canonical_bytes(parsed_c)
+    assert hash_c == hash_a, 'hash must be identical regardless of @meta input order'
+
+Test 17 — Style Profile Write Is Fully Auditable
+def test_17_style_profile_write_is_auditable():
+    """
+    A style scope write goes through PLAN→VERIFY→COMMIT.
+    It appears in provenance with scope='style'.
+    Provenance query returns it ordered by ts.
+    No direct setter was used.
+    """
+    import tempfile, os, json
+    from cc.runtime import AgentRuntime
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path  = os.path.join(tmp, 'test17.db')
+        log_path = os.path.join(tmp, 'receipts.jsonl')
+        rt = AgentRuntime(db_path=db_path, log_path=log_path)
+
+        # Write 1: style unit via run_cycle (correct path)
+        r1 = rt.run_cycle(
+            plan={'action': 'mem_store', 'unit_id': 'style_voice',
+                  'scope': 'style', 'tags': ['voice'],
+                  'body': {'summary': 'warm, direct'}},
+            act_fn=lambda plan: plan,
+            invariants=[],
+        )
+        assert r1 == 'COMMIT', f'expected COMMIT, got {r1}'
+
+        # Write 2: second style update — same unit_id, should succeed
+        # (style is not canon — it is mutable)
+        r2 = rt.run_cycle(
+            plan={'action': 'mem_store', 'unit_id': 'style_voice',
+                  'scope': 'style', 'tags': ['voice'],
+                  'body': {'summary': 'direct, concise'}},
+            act_fn=lambda plan: plan,
+            invariants=[],
+        )
+        assert r2 == 'COMMIT', f'style is mutable — second write must COMMIT, got {r2}'
+
+        # Provenance audit — must show both writes in ts order
+        prov = rt.mem_store.get_provenance(scope='style')
+        assert len(prov) >= 2, f'expected >= 2 provenance rows for style, got {len(prov)}'
+
+        summaries = [row['body']['summary'] for row in prov]
+        assert 'warm, direct'    in summaries, 'first write must appear in provenance'
+        assert 'direct, concise' in summaries, 'second write must appear in provenance'
+
+        # Timestamps must be ordered (drift is auditable)
+        ts_list = [row['ts'] for row in prov]
+        assert ts_list == sorted(ts_list), 'provenance rows must be ordered by ts'
+
+        # COMMIT receipts in log
+        receipts = [json.loads(l) for l in open(log_path)]
+        commits = [r for r in receipts if r['outcome'] == 'COMMIT']
+        assert len(commits) >= 2, 'both writes must produce COMMIT receipts'
+
+8. New Helper Methods
+
+Method
+File
+Purpose
+get_provenance(scope=None)
+memory.py
+SELECT from provenance, optionally filtered by scope, ordered by ts ASC. Returns list of dicts. Called in Test 17. Never called from the state machine itself.
+
+If the provenance table does not yet have a scope column: add it during COMMIT. Same migration pattern as Week 3 (ALTER TABLE IF NOT EXISTS pattern or add in the CREATE TABLE statement).
+
+9. Execution Order
+Do not skip steps. Do not jump ahead.
+
+Step
+Action
+1
+Run existing suite. Must show 15 passed, 0 warnings. If anything is red, stop.
+2
+Write zw_block.py (parse_zw_block + canonical_bytes). No imports. No tests yet.
+3
+Write Test 16. Run it alone. Confirm it fails (function not yet complete if needed). Iterate to green.
+4
+Add mem_store_zw adapter to memory.py. Add get_provenance helper.
+5
+Confirm scope column exists in provenance (add if not). Confirm COMMIT writes scope.
+6
+Write Test 17. Run it alone. Green.
+7
+Run full suite: python3 -m pytest cc/tests/test_mvp.py -v. Must show 17 passed.
+
+10. What Week 4 Does NOT Touch
+✗ The state machine phases (PLAN→ACT→VERIFY→COMMIT) — frozen
+✗ The receipt schema and chain hashing algorithm — frozen
+✗ identity.py — do not touch
+✗ Key files (cc_identity.key, cc_identity.pub) — do not touch
+✗ TTL enforcement logic — frozen
+✗ Canon immutability rule — frozen
+✗ Policy rules table — frozen
+✗ GUI, network calls, MCP/A2A, multi-user anything — Stage 3
+✗ No new dependencies. stdlib + PyNaCl only.
+
+11. Acceptance Criteria
+python3 -m pytest cc/tests/test_mvp.py   →   17 passed.   That is the only verdict.
+
+When 17 are green, Stage 2 is officially closed. Stage 3 scope: MCP/A2A adapters, tool gateway going external, first real multi-session scenario with a human in the loop. We scope that together when the green line holds.
+
+You held the standard through three stages. The foundation is solid because you built it that way. Week 4 is the cleanest stage yet — the architecture is already doing the work. Ship the green line.

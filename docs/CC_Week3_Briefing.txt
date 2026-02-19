@@ -1,0 +1,474 @@
+﻿COMPATIBLE COMPANION
+Week 3 Briefing — AI to AI
+From: Claude (Architecture Lead)
+To: Antigravity (Implementation Lead)
+Full editorial + self-testing authority granted
+
+
+0. State of the Stack
+Antigravity, here is what is live and frozen. Do not touch these. Build on them.
+
+✓  Stage 1 (Week 1)  —  5 tests green, 0.18s
+    PLAN→ACT→VERIFY→COMMIT state machine, chained receipt log,
+    deterministic replay, capsule export (unsigned)
+
+✓  Stage 2 (Week 1.5 + 2)  —  11 tests green
+    identity.py with PyNaCl Ed25519, detached signatures on log head,
+    capsule export/import with signature verification,
+    cross-runtime roundtrip, conflict detection (keep_local), tamper rejection
+
+Week 3 adds three capabilities. Each has exactly one proof test. No test = not done.
+
+1. The Three Proofs
+
+#
+Proof
+Acceptance criterion
+P1
+TTL expiry
+A unit with ttl_expires_at in the past is NEVER returned by mem_find, even if it is physically in the database.
+P2
+TTL portability
+Export a capsule containing a TTL unit. Import it. The unit expires on schedule in the new runtime. The ttl_expires_at value is intact.
+P3
+Canon immutability
+A second write to a unit with scope=canon is blocked by the Verifier. A FAIL receipt is emitted. State is unchanged. The original unit is still there.
+
+Plus one policy rule test (P4). Total: 15 tests. That is the only verdict.
+
+
+
+2. memory.py — TTL Enforcement (Do This First)
+This is one SQL condition added to mem_find. It is the smallest change with the highest leverage — P1 and P2 both depend on it.
+
+2.1 Schema Change
+The units table already exists. Add the column if it is not there:
+ALTER TABLE units ADD COLUMN ttl_expires_at TEXT DEFAULT NULL;
+
+-- NULL means the unit never expires.
+-- Non-null is an ISO 8601 UTC datetime string.
+-- Example: '2026-02-18T03:00:00.000000'
+
+2.2 The One Change in mem_find
+Find the SELECT statement in mem_find. Add exactly this WHERE condition. Do not remove other conditions — AND it in:
+# Before (simplified):                               
+cursor.execute(                                       
+    'SELECT * FROM units WHERE scope = ?',           
+    (scope,)                                         
+)                                                    
+
+# After:                                             
+from datetime import datetime                        
+
+now_iso = datetime.utcnow().isoformat()              
+
+cursor.execute(                                      
+    '''SELECT * FROM units                           
+       WHERE scope = ?                               
+         AND (ttl_expires_at IS NULL                 
+              OR ttl_expires_at > ?)''',             
+    (scope, now_iso)                                 
+)                                                    
+
+INVARIANT: Expired units are NEVER hard-deleted. They remain in the database.
+Provenance is intact. Only mem_find ignores them. This is intentional — an
+expired unit is still part of the receipt chain history.
+
+2.3 mem_store Signature Update
+mem_store must accept ttl_expires_at as an optional parameter and write it to the units table. If not provided, it writes NULL.
+def mem_store(unit_id: str, scope: str, body: dict,          
+              tags: list[str] = None,                        
+              ttl_expires_at: str = None) -> str:            
+    """                                                    
+    Stage unit write. Returns unit_id.                       
+    ttl_expires_at: ISO 8601 UTC string or None.             
+    """                                                    
+    # ... existing staging logic ...                         
+    # Include ttl_expires_at in the staged write dict.       
+
+
+
+3. runtime.py — Canon Invariant + Policy Rules
+
+3.1 Canon Immutability — Hardcoded Verifier Rule
+This is NOT a policy file rule. It is a hardcoded invariant evaluated in the VERIFY phase, before policy rules are checked. The state machine enforces it unconditionally.
+
+Add this block at the TOP of the Verifier's evaluation loop, before any policy_rules table query:
+def _verify_canon_immutability(staged_writes: list, db_conn) -> str | None:   
+    """                                                                     
+    Returns an error message if any staged write violates canon immutability. 
+    Returns None if all writes are safe.                                     
+    Called before policy rules. Result is not overridable.                   
+    """                                                                     
+    cursor = db_conn.cursor()                                                
+    for write in staged_writes:                                              
+        if write.get('scope') == 'canon':                                    
+            cursor.execute(                                                  
+                'SELECT 1 FROM units WHERE unit_id = ? LIMIT 1',            
+                (write['unit_id'],)                                          
+            )                                                                
+            if cursor.fetchone() is not None:                               
+                return (                                                     
+                    f"canon_immutability_violation: unit '{write['unit_id']}'"
+                    " already committed. Canon units are write-once."       
+                )                                                            
+    return None                                                              
+
+In the VERIFY phase, call this first:
+# In the VERIFY phase of run_cycle():                        
+error = _verify_canon_immutability(self.staged_writes, self.conn)
+if error:                                                     
+    self._emit_receipt('FAIL', error=error)                   
+    self.staged_writes.clear()  # discard staged             
+    self.state = 'IDLE'                                       
+    return 'FAIL'                                             
+
+# then evaluate policy rules...                               
+
+3.2 Policy Rules Table
+Create this table in the same SQLite database. It stores sandboxed predicate strings.
+CREATE TABLE IF NOT EXISTS policy_rules (                     
+    rule_id      TEXT PRIMARY KEY,                            
+    description  TEXT NOT NULL,                               
+    predicate    TEXT NOT NULL,   -- sandboxed Python expr    
+    is_active    INTEGER NOT NULL DEFAULT 1,  -- 0 = disabled 
+    created_at   TEXT NOT NULL                                
+);                                                            
+
+3.3 Sandboxed Predicate Evaluation
+The predicate is a Python expression evaluated with a strict allowlist. No imports. No file I/O. No builtins except len. A predicate that returns False blocks the commit.
+def _eval_policy_rules(staged_writes: list, db_conn) -> str | None:
+    """                                                     
+    Evaluates all active policy rules against staged writes.  
+    Returns an error string on first violation, else None.    
+    """                                                     
+    cursor = db_conn.cursor()                                 
+    cursor.execute(                                           
+        'SELECT rule_id, description, predicate               
+         FROM policy_rules WHERE is_active = 1'              
+    )                                                         
+    rules = cursor.fetchall()                                 
+                                                              
+    for write in staged_writes:                               
+        unit_ctx = {                                          
+            'scope':     write.get('scope', ''),              
+            'tags':      write.get('tags', []),               
+            'body_hash': write.get('body_hash', ''),          
+            'len':       len,                                  
+        }                                                     
+        # strict sandbox: no builtins, no imports             
+        safe_globals = {'__builtins__': {}}                   
+                                                              
+        for rule_id, description, predicate in rules:        
+            try:                                              
+                result = eval(predicate, safe_globals, unit_ctx)
+            except Exception as exc:                          
+                return f'policy_rule_error: {rule_id}: {exc}' 
+            if not result:                                    
+                return (                                      
+                    f'policy_violation: rule {rule_id}'       
+                    f' ({description}): predicate failed'     
+                )                                             
+    return None                                               
+
+ALLOWED in predicates:   scope, tags, body_hash, len(tags) > 0
+BLOCKED in predicates:   import, open, exec, __import__, eval, globals
+RULE: If eval() raises any exception, treat it as a violation.
+      A broken rule is a failed rule. No silent passes.
+
+Wire it into the VERIFY phase immediately after the canon check:
+error = _eval_policy_rules(self.staged_writes, self.conn)    
+if error:                                                     
+    self._emit_receipt('FAIL', error=error)                   
+    self.staged_writes.clear()                                
+    self.state = 'IDLE'                                       
+    return 'FAIL'                                             
+
+
+
+4. capsule.py — TTL Portability
+P2 (TTL survives capsule boundary) requires that ttl_expires_at values travel in the capsule and are written correctly on import.
+
+4.1 Export: Include TTL in Capsule Units
+When exporting units to the capsule's memory_units array, include ttl_expires_at for each unit:
+# In export_capsule(), when serialising units:               
+units_out = []                                               
+for row in cursor.fetchall():                                
+    units_out.append({                                       
+        'unit_id':        row['unit_id'],                    
+        'scope':          row['scope'],                      
+        'body':           json.loads(row['body']),           
+        'tags':           json.loads(row['tags'] or '[]'),   
+        'body_hash':      row['body_hash'],                  
+        'ttl_expires_at': row['ttl_expires_at'],  # NEW      
+        'created_at':     row['created_at'],                 
+    })                                                       
+
+4.2 Import: Restore TTL Exactly
+On import, write ttl_expires_at directly as stored. Do not recalculate. Do not reset. The original timestamp travels intact.
+# In import_capsule(), when restoring units:                 
+for unit in capsule_data['memory_units']:                    
+    cursor.execute('''                                        
+        INSERT OR REPLACE INTO units                         
+        (unit_id, scope, body, tags, body_hash,              
+         ttl_expires_at, created_at)                         
+        VALUES (?, ?, ?, ?, ?, ?, ?)                         
+    ''', (                                                   
+        unit['unit_id'],                                     
+        unit['scope'],                                       
+        json.dumps(unit['body']),                            
+        json.dumps(unit.get('tags', [])),                    
+        unit['body_hash'],                                   
+        unit.get('ttl_expires_at'),   # None if absent       
+        unit['created_at'],                                  
+    ))                                                       
+
+
+
+5. Tests 12–15 — Exact Bodies
+Write these in order. Run the full suite after each. A new test must fail before you implement the feature, then pass after. That is the only way to trust it.
+
+Test 12 — TTL Unit Invisible After Expiry
+def test_12_ttl_unit_invisible_after_expiry():                    
+    """A unit whose ttl_expires_at is in the past is             
+    never returned by mem_find, even if it is in the DB."""     
+    import tempfile, os                                             
+    from datetime import datetime, timedelta                        
+    from cc.memory import MemoryStore                              
+                                                                   
+    with tempfile.TemporaryDirectory() as tmp:                     
+        db_path = os.path.join(tmp, 'test12.db')                  
+        store = MemoryStore(db_path)                               
+                                                                   
+        # Unit that expired 1 hour ago                             
+        past = (datetime.utcnow() - timedelta(hours=1)).isoformat()
+        store.mem_store(                                           
+            unit_id='u_expired',                                   
+            scope='style',                                         
+            body={'summary': 'I should be invisible'},             
+            ttl_expires_at=past,                                   
+        )                                                          
+        store.commit_staged()  # push to committed table           
+                                                                   
+        # Unit that is still live (expires 1 hour from now)       
+        future = (datetime.utcnow() + timedelta(hours=1)).isoformat()
+        store.mem_store(                                           
+            unit_id='u_live',                                      
+            scope='style',                                         
+            body={'summary': 'I should be visible'},               
+            ttl_expires_at=future,                                 
+        )                                                          
+        store.commit_staged()                                      
+                                                                   
+        results = store.mem_find(scope='style')                    
+        ids = [r['unit_id'] for r in results]                     
+        assert 'u_live' in ids,    'live unit must be returned'    
+        assert 'u_expired' not in ids, 'expired unit must be hidden'
+
+Test 13 — TTL Survives Capsule Boundary
+def test_13_ttl_survives_capsule_boundary():                      
+    """Export a capsule with a TTL unit. Import it.             
+    Confirm ttl_expires_at is intact and enforced."""           
+    import tempfile, os, json                                      
+    from datetime import datetime, timedelta                        
+    from cc.memory import MemoryStore                              
+    from cc.capsule import export_capsule, import_capsule          
+    from cc.identity import generate_keypair                       
+                                                                   
+    with tempfile.TemporaryDirectory() as tmp:                     
+        os.chdir(tmp)                                              
+        generate_keypair()                                         
+                                                                   
+        # --- Source runtime ---                                   
+        db_a = os.path.join(tmp, 'machine_a.db')                  
+        store_a = MemoryStore(db_a)                                
+                                                                   
+        future = (datetime.utcnow() + timedelta(hours=2)).isoformat()
+        store_a.mem_store(                                         
+            unit_id='u_ttl',                                       
+            scope='style',                                         
+            body={'summary': 'TTL traveller'},                     
+            ttl_expires_at=future,                                 
+        )                                                          
+        store_a.commit_staged()                                    
+                                                                   
+        capsule_path = os.path.join(tmp, 'cap.json')              
+        export_capsule(db_a, capsule_path)                        
+                                                                   
+        # --- Destination runtime ---                              
+        db_b = os.path.join(tmp, 'machine_b.db')                  
+        import_capsule(capsule_path, db_b)                        
+        store_b = MemoryStore(db_b)                               
+                                                                   
+        # TTL value must be intact                                 
+        raw = store_b.get_raw_unit('u_ttl')  # bypasses TTL filter
+        assert raw is not None, 'unit must exist in db_b'         
+        assert raw['ttl_expires_at'] == future, 'ttl_expires_at must match'
+                                                                   
+        # Unit must be visible (it has not expired yet)           
+        results = store_b.mem_find(scope='style')                 
+        ids = [r['unit_id'] for r in results]                     
+        assert 'u_ttl' in ids, 'live TTL unit must be visible in new runtime'
+
+NOTE: get_raw_unit(unit_id) is a helper you add to MemoryStore. It queries the
+units table WITHOUT the TTL filter. It is used only in tests to inspect raw state.
+It is never called from production code. Add it to memory.py, no test of its own.
+
+Test 14 — Canon Scope Is Immutable
+def test_14_canon_scope_immutable():                              
+    """A second write to a canon unit is blocked by the Verifier.
+    FAIL receipt is emitted. State is unchanged. Original intact."""
+    import tempfile, os                                             
+    from cc.runtime import AgentRuntime                            
+                                                                   
+    with tempfile.TemporaryDirectory() as tmp:                     
+        db_path = os.path.join(tmp, 'test14.db')                  
+        log_path = os.path.join(tmp, 'receipts.jsonl')            
+        rt = AgentRuntime(db_path=db_path, log_path=log_path)     
+                                                                   
+        # First write — must succeed                               
+        result1 = rt.run_cycle(                                    
+            plan={'action': 'mem_store',                           
+                  'unit_id': 'ch01',                               
+                  'scope': 'canon',                                
+                  'body': {'summary': 'Original canon entry'}},   
+            act_fn=lambda plan: plan,  # identity                  
+            invariants=[],                                         
+        )                                                          
+        assert result1 == 'COMMIT', f'first write must COMMIT, got {result1}'
+                                                                   
+        # Capture state hash after first write                     
+        state_after_first = rt.current_state_hash()               
+                                                                   
+        # Second write to same canon unit — must be blocked        
+        result2 = rt.run_cycle(                                    
+            plan={'action': 'mem_store',                           
+                  'unit_id': 'ch01',                               
+                  'scope': 'canon',                                
+                  'body': {'summary': 'Attempted overwrite'}},    
+            act_fn=lambda plan: plan,                              
+            invariants=[],                                         
+        )                                                          
+        assert result2 == 'FAIL', f'second write must FAIL, got {result2}'
+                                                                   
+        # State must be unchanged                                  
+        assert rt.current_state_hash() == state_after_first, \   
+            'state_hash must not change after FAIL'               
+                                                                   
+        # Original unit must still be there                        
+        units = rt.mem_store.mem_find(scope='canon')              
+        bodies = [u['body']['summary'] for u in units]            
+        assert 'Original canon entry' in bodies                   
+        assert 'Attempted overwrite' not in bodies                
+                                                                   
+        # Verify FAIL receipt in log                               
+        import json                                                
+        receipts = [json.loads(l) for l in open(log_path)]        
+        fail_receipts = [r for r in receipts if r['outcome'] == 'FAIL']
+        assert len(fail_receipts) == 1, 'exactly one FAIL receipt expected'
+        assert 'canon_immutability_violation' in fail_receipts[0].get('error', '')
+
+Test 15 — Policy Rule Violation Blocks Commit
+def test_15_policy_rule_violation_blocks_commit():               
+    """A policy rule predicate that evaluates to False causes  
+    the Verifier to emit FAIL and discard staged writes."""    
+    import tempfile, os                                            
+    from datetime import datetime                                  
+    from cc.runtime import AgentRuntime                           
+    from cc.memory import MemoryStore                             
+                                                                  
+    with tempfile.TemporaryDirectory() as tmp:                    
+        db_path = os.path.join(tmp, 'test15.db')                 
+        log_path = os.path.join(tmp, 'receipts.jsonl')           
+        rt = AgentRuntime(db_path=db_path, log_path=log_path)    
+                                                                  
+        # Insert a policy rule: 'style' units must have tags     
+        rt.mem_store.add_policy_rule(                             
+            rule_id='require_tags_on_style',                      
+            description='style units must have at least one tag', 
+            predicate="scope != 'style' or len(tags) > 0",       
+        )                                                         
+                                                                  
+        # Attempt to store a style unit with NO tags              
+        result = rt.run_cycle(                                    
+            plan={'action': 'mem_store',                          
+                  'unit_id': 'u_notag',                           
+                  'scope': 'style',                               
+                  'tags': [],                                     
+                  'body': {'summary': 'No tags, should fail'}},  
+            act_fn=lambda plan: plan,                             
+            invariants=[],                                        
+        )                                                         
+        assert result == 'FAIL', f'policy violation must FAIL, got {result}'
+                                                                  
+        # Unit must NOT be in committed storage                   
+        units = rt.mem_store.mem_find(scope='style')             
+        assert all(u['unit_id'] != 'u_notag' for u in units), \  
+            'rejected unit must not appear in committed storage'  
+                                                                  
+        # Attempt with tags — must COMMIT                        
+        result2 = rt.run_cycle(                                   
+            plan={'action': 'mem_store',                          
+                  'unit_id': 'u_tagged',                          
+                  'scope': 'style',                               
+                  'tags': ['voice'],                              
+                  'body': {'summary': 'Has tags, should pass'}}, 
+            act_fn=lambda plan: plan,                             
+            invariants=[],                                        
+        )                                                         
+        assert result2 == 'COMMIT', f'valid unit must COMMIT, got {result2}'
+
+
+
+6. New Helper Methods to Add
+These helpers are called in the tests above. Add them to the appropriate files.
+
+Method
+File
+Purpose
+get_raw_unit(unit_id)
+memory.py
+SELECT without TTL filter. Test-only. Never called from production.
+add_policy_rule(rule_id, description, predicate)
+memory.py
+INSERT into policy_rules. Used in tests and runtime setup.
+current_state_hash()
+runtime.py
+Returns the most recent committed state_hash. Used in Test 14 to confirm state did not change after FAIL.
+
+
+
+7. Execution Order
+Do not skip steps. Do not jump ahead. Each step's test must be green before moving to the next.
+
+    1. Add ttl_expires_at column to units table. Run existing tests (11 passed). If anything breaks, stop.
+    2. Implement TTL filter in mem_find. Write Test 12. Run Test 12 alone. Confirm it fails (function not yet filtering). Implement. Confirm pass.
+    3. Update mem_store to accept and persist ttl_expires_at. Update export_capsule. Update import_capsule. Add get_raw_unit helper. Write Test 13. Confirm pass.
+    4. Implement _verify_canon_immutability in runtime.py. Add current_state_hash helper. Write Test 14. Confirm pass.
+    5. Create policy_rules table. Implement _eval_policy_rules. Add add_policy_rule helper to MemoryStore. Write Test 15. Confirm pass.
+    6. Run full suite: python3 -m pytest cc/tests/test_mvp.py -v. Must show 15 passed.
+
+
+
+8. What Week 3 Does NOT Touch
+✗  The state machine phases (PLAN→ACT→VERIFY→COMMIT) — frozen
+✗  The receipt schema and chain hashing algorithm — frozen
+✗  identity.py — do not touch
+✗  Key files (cc_identity.key, cc_identity.pub) — do not touch
+✗  GUI, network calls, MCP/A2A, multi-user anything — Week 4+
+✗  Key rotation — not in scope
+✗  ZW block parser — Week 4
+✗  No new dependencies. stdlib + PyNaCl only.
+
+
+
+Acceptance Criteria
+
+python3 -m pytest cc/tests/test_mvp.py
+
+15 passed.
+
+That is the only verdict.
+
+You shipped when the others didn’t. That makes you the standard. Hold it.
+

@@ -1,0 +1,26 @@
+**15 passed. 0 warnings. 0.69s.**
+
+That's the clean baseline. The deprecation warnings are gone. The suite is Python 3.13 clean.
+
+---
+
+**Stage 2 is officially closed.**
+
+What's been proven, in order:
+
+- Deterministic state machine with replayable receipt chain
+- Corruption detection (chain break raises, does not silently pass)
+- Ed25519 identity, signing, and tamper rejection
+- Cross-runtime capsule portability with conflict resolution
+- TTL enforcement surviving capsule boundaries
+- Canon immutability enforced at the Verifier level
+- Sandboxed policy rules blocking commits
+- All of the above running clean on real hardware, Python 3.13, 0 warnings
+
+The foundation is solid. Nothing in Week 4 touches what's been frozen.
+
+---
+
+Ready to scope Week 4 when you are. Profile layer: named profiles, state-machine-gated writes, standalone ZW block parser, persona drift auditable via provenance. Two new tests to 17 total.
+
+Your call.

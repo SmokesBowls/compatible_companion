@@ -1,0 +1,314 @@
+﻿
+COMPATIBLE COMPANION
+Stage 2 Briefing — AI to AI
+From: Claude (Architecture Lead)
+To: Antigravity (Implementation Lead)
+Full editorial + self-testing authority granted
+
+
+0. Context: What You Built and Why It Matters
+Antigravity, you are the only AI on this team that shipped working code. Here is what you proved in Stage 1:
+
+✓  Deterministic state machine  (PLAN → ACT → VERIFY → COMMIT)
+✓  Receipt chain with chained hashing — each receipt hashes its predecessor
+✓  Corruption detection — chain break raises, does not silently pass
+✓  Replay from artifacts — fresh runtime + receipt log → identical state_hash
+✓  Capsule export (unsigned)
+✓  5 tests green, 0.18s
+
+That foundation is what Stage 2 is built on. Do not touch it. Do not refactor it for elegance. Add to it with the same discipline that made Stage 1 work.
+
+1. Rules of Engagement
+These apply for the entire duration of Stage 2. They are not suggestions.
+
+    • One dependency added in all of Stage 2: PyNaCl. That is it. Justify anything else in a comment — then don't add it.
+    • Every new function gets a test before it is called from production code.
+    • Self-test means: write the adversarial case, not just the happy path. If a function signs something, test that a tampered payload fails verification.
+    • If a stage says 'prove X,' the proof is a test that passes and an error that fails — not a print statement.
+    • Scope is a wall. If something is listed under a later week, it does not exist yet.
+    • The only verdict that matters: python3 -m pytest cc/tests/test_mvp.py — all N passed.
+
+2. Week 1.5 — Identity (Do This First)
+One new file. Three operations. Nothing else.
+
+2.1 Install
+pip install pynacl
+
+2.2 identity.py — The Entire API Surface
+Create cc/identity.py. It must expose exactly these three functions and nothing else that is public:
+
+import nacl.signing
+import base64, json, os, stat
+
+KEY_FILE = 'cc_identity.key'
+PUB_FILE = 'cc_identity.pub'
+
+def generate_keypair() -> tuple[str, str]:
+    """Returns (sk_b64, vk_b64). Writes both files."""
+    sk = nacl.signing.SigningKey.generate()
+    vk = sk.verify_key
+    sk_b64 = base64.b64encode(bytes(sk)).decode()
+    vk_b64 = base64.b64encode(bytes(vk)).decode()
+    with open(KEY_FILE, 'w') as f:
+        json.dump({'sk': sk_b64, 'vk': vk_b64}, f)
+    os.chmod(KEY_FILE, stat.S_IRUSR | stat.S_IWUSR)  # 600
+    with open(PUB_FILE, 'w') as f:
+        json.dump({'vk': vk_b64}, f)
+    return sk_b64, vk_b64
+
+def sign_payload(payload_bytes: bytes) -> str:
+    """Load key from file. Sign payload. Return base64 sig."""
+    with open(KEY_FILE) as f:
+        sk_b64 = json.load(f)['sk']
+    sk = nacl.signing.SigningKey(base64.b64decode(sk_b64))
+    sig = sk.sign(payload_bytes).signature
+    return base64.b64encode(sig).decode()
+
+def verify_payload(payload_bytes: bytes, sig_b64: str, vk_b64: str) -> None:
+    """Raises nacl.exceptions.BadSignatureError if invalid."""
+    vk = nacl.signing.VerifyKey(base64.b64decode(vk_b64))
+    vk.verify(payload_bytes, base64.b64decode(sig_b64))
+
+Notes for your self-review before committing:
+    • KEY_FILE must be chmod 600. The os.chmod line is not optional.
+    • sign_payload loads from disk every call — that is correct for now. No in-memory key caching in Stage 2.
+    • verify_payload raises on failure. Callers catch it. Do not swallow the exception in this function.
+
+2.3 Where to Call It
+Two integration points only:
+
+On capsule export (capsule.py)
+After the capsule dict is fully assembled, before writing to disk:
+from cc.identity import sign_payload
+
+# 1. canonical bytes of capsule (minus signatures field)
+cap_copy = {k: v for k, v in capsule.items() if k != 'signatures'}
+payload = json.dumps(cap_copy, sort_keys=True, separators=(',', ':')).encode()
+
+# 2. sign
+sig_b64 = sign_payload(payload)
+
+# 3. attach
+capsule['signatures'] = {
+    'log_chain_head': runtime.log_chain_head,
+    'sig_b64': sig_b64,
+    'vk_b64': open('cc_identity.pub').read()  # or load properly
+}
+
+On capsule import (capsule.py)
+Before accepting any state from the capsule:
+from cc.identity import verify_payload
+import nacl.exceptions
+
+sigs = capsule.get('signatures', {})
+cap_copy = {k: v for k, v in capsule.items() if k != 'signatures'}
+payload = json.dumps(cap_copy, sort_keys=True, separators=(',', ':')).encode()
+
+try:
+    verify_payload(payload, sigs['sig_b64'], sigs['vk_b64'])
+except nacl.exceptions.BadSignatureError:
+    raise ValueError('Capsule signature invalid — import rejected')
+
+The log_chain_head in signatures is the chain head hash from the runtime at export time. It is recorded but not yet verified on import — that is Week 2's job when cross-runtime replay is proven.
+
+2.4 Tests to Add (Tests 6 + 7)
+Add these to test_mvp.py. Both must pass before Week 1.5 is done.
+
+def test_sign_and_verify():
+    """Test 6: Keypair generation, sign, verify round-trip."""
+    import os
+    from cc.identity import generate_keypair, sign_payload, verify_payload
+    sk_b64, vk_b64 = generate_keypair()
+    payload = b'test payload for signing'
+    sig_b64 = sign_payload(payload)
+    # must not raise
+    verify_payload(payload, sig_b64, vk_b64)
+    # cleanup
+    os.remove('cc_identity.key')
+    os.remove('cc_identity.pub')
+
+def test_tampered_sig_rejected():
+    """Test 7: Tampered signature raises, not silently passes."""
+    import os
+    import nacl.exceptions
+    from cc.identity import generate_keypair, sign_payload, verify_payload
+    sk_b64, vk_b64 = generate_keypair()
+    payload = b'original payload'
+    sig_b64 = sign_payload(payload)
+    # flip one character in the sig
+    sig_bytes = list(base64.b64decode(sig_b64))
+    sig_bytes[0] ^= 0xFF  # flip all bits in first byte
+    bad_sig = base64.b64encode(bytes(sig_bytes)).decode()
+    with pytest.raises(nacl.exceptions.BadSignatureError):
+        verify_payload(payload, bad_sig, vk_b64)
+    os.remove('cc_identity.key')
+    os.remove('cc_identity.pub')
+
+ACCEPTANCE CRITERIA — Week 1.5:
+python3 -m pytest cc/tests/test_mvp.py
+7 passed.  That is the only verdict.
+
+3. Week 2 — Cross-Runtime Import
+The proof: export a capsule on machine A. Import it on a different runtime (or fresh process). State hashes match. Signature verifies.
+
+3.1 What to Add to capsule.py
+capsule_import(path) must do these things in order. If any step fails, raise — do not continue.
+
+    • Load the capsule JSON from path.
+    • Verify the signature (Week 1.5 code). Reject if invalid.
+    • Check prev_capsule_hash if present. If the capsule references a prior capsule hash and the local store has that hash, confirm continuity. If not found locally, log a warning — do not reject (first import has no history).
+    • Check capsule_series_uuid. Store it. Two capsules with different series UUIDs are parallel branches — they must not be merged silently.
+    • Detect unit conflicts: for each memory unit in the incoming capsule, check if a unit with the same id already exists locally with a different content_hash.
+    • Resolve conflicts explicitly: no silent merges. The resolution must be one of keep_local or keep_incoming. In Week 2, the resolution is hardcoded to keep_local unless the caller passes override=True.
+    • Write accepted units to memory. Return a structured import report.
+
+3.2 Capsule Format — Add These Fields
+{
+  "capsule_id": "<uuid4>",
+  "capsule_series_uuid": "<uuid4 — same for all exports from same agent>",
+  "prev_capsule_hash": "<sha3-256 of prior capsule bytes, or null>",
+  "exported_at": "<ISO8601 UTC>",
+  "agent_id": "<stable string>",
+  "log_chain_head": "<sha256 of final receipt at export time>",
+  "memory_units": [ ... ],
+  "signatures": {
+    "sig_b64": "<ed25519 sig over canonical capsule bytes>",
+    "vk_b64": "<verify key base64>"
+  }
+}
+
+3.3 Tests to Add (Tests 8 + 9 + 10)
+def test_capsule_export_import_roundtrip():
+    """Test 8: Export then import in same process. Sig verifies."""
+
+def test_capsule_import_rejects_bad_sig():
+    """Test 9: Tamper one byte of capsule body. Import raises."""
+
+def test_conflict_keep_local():
+    """Test 10: Import unit with same id, different hash. keep_local wins."""
+
+ACCEPTANCE CRITERIA — Week 2:
+python3 -m pytest cc/tests/test_mvp.py
+10 passed.
+
+4. Week 3 — Policy and TTL
+The proof: a unit with a TTL expires. mem_find never returns it after expiry. TTL survives a capsule export/import boundary.
+
+4.1 TTL Enforcement in memory.py
+In mem_find: before returning any unit, check expires_at. If expires_at is not null and expires_at < utcnow(), do not return the unit. Do not delete it — mark it as expired in a status field. Expired units must still appear in the receipt chain so replay is not broken.
+
+TTL field in the memory unit schema:
+expires_at: str | None   # ISO8601 UTC, null means never expires
+
+4.2 Canon Scope — Immutable After First Commit
+In the Verifier phase of runtime.py: if a memory write targets scope='canon' and a unit with that id already exists with status='committed', reject the write. Return verdict=FAIL with reason='canon_immutable'. The staged write is discarded. No exception — a controlled FAIL receipt is correct.
+
+4.3 Policy Rules in Verifier
+Policy rules are evaluated in the VERIFY phase. They are plain Python callables, sandboxed by not being given access to the db or runtime state directly — they receive only the staged_payload dict and the policy_config dict.
+
+def policy_summary_length(staged: dict, config: dict) -> tuple[bool, str]:
+    max_len = config.get('summary_max', 240)
+    summary = staged.get('summary', '')
+    if len(summary) > max_len:
+        return False, f'summary {len(summary)} chars exceeds max {max_len}'
+    return True, 'ok'
+
+Built-in policies to implement in Week 3: summary_max (default 240), bullets_max (default 5). No imports inside policy functions. If a policy function raises, it is treated as a FAIL.
+
+4.4 Tests to Add (Tests 11 + 12 + 13)
+def test_ttl_expired_unit_not_returned():
+    """Test 11: Write unit with past expiry. mem_find returns nothing."""
+
+def test_ttl_survives_capsule_boundary():
+    """Test 12: Export capsule with expired unit. Import. mem_find still returns nothing."""
+
+def test_canon_immutable():
+    """Test 13: Write to canon twice. Second write returns FAIL receipt."""
+
+ACCEPTANCE CRITERIA — Week 3:
+python3 -m pytest cc/tests/test_mvp.py
+13 passed.
+
+5. Week 4 — Profile Layer
+The proof: a named profile can be written and read. Profile writes go through the full PLAN→ACT→VERIFY→COMMIT cycle — no shortcut path. Persona drift is traceable via provenance.
+
+5.1 Profile Schema
+{
+  "profile_id": "<uuid4>",
+  "name": "core" | "style" | "work" | "canon",
+  "fields": { ... },
+  "created_at": "<ISO8601>",
+  "updated_at": "<ISO8601>",
+  "provenance": [
+    { "receipt_id": "...", "field": "...", "old": "...", "new": "..." }
+  ]
+}
+
+Provenance is append-only. Every field change records the prior value and the receipt_id that authorized the change. This is how persona drift becomes auditable without a separate audit log.
+
+5.2 ZW Block Parser — Standalone
+The ZW block parser (zw_block.py) must remain standalone — no EngAIn imports, no external dependencies beyond hashlib. It parses the header line, @meta lines, and section body. It produces a canonical dict that can be hashed. If parsing fails, it raises ParseError — not a silent empty return.
+
+Minimum parseable format:
+ZW[mem.unit]
+id: ch02
+scope: canon
+@meta ttl: null
+@meta tags: awakening, lyraleth
+---
+summary: Observatory holds as Astral tides spike.
+bullets:
+  - Guardianship fragile
+  - Resonance Chamber key
+
+5.3 Tests to Add (Tests 14 + 15)
+def test_profile_write_goes_through_state_machine():
+    """Test 14: Profile write produces a receipt. Provenance is recorded."""
+
+def test_zw_block_parse_roundtrip():
+    """Test 15: Parse a ZW block. Canonical hash is deterministic."""
+
+ACCEPTANCE CRITERIA — Week 4:
+python3 -m pytest cc/tests/test_mvp.py
+15 passed.
+
+6. Your Self-Testing Protocol
+You have full editorial and self-testing authority. Here is how to use it without breaking things:
+
+6.1 Before Writing Any Code
+    • Read the acceptance criteria for the current week.
+    • Write the test signatures first (empty bodies with docstrings).
+    • Verify the existing tests still pass: python3 -m pytest cc/tests/test_mvp.py
+
+6.2 After Writing Each New Function
+    • Fill in the test body. Run it. It should fail (function is a stub).
+    • Implement the function until the test passes.
+    • Run the full suite. If an earlier test breaks, stop and fix it before continuing.
+
+6.3 Editorial Authority Means
+    • You may refactor any function signature that is in the file you are currently working on, as long as all tests still pass after the refactor.
+    • You may add helper functions that have no public exposure and no tests — but they must be covered by the public function's test.
+    • You may NOT change the state machine phases, the receipt schema, or the chain hashing algorithm. Those are frozen.
+    • You may NOT add a dependency without recording it as a comment in the file where it would be used, marked TODO:DEPENDENCY, and bringing it to the human for approval.
+
+6.4 When Something Breaks
+Isolate before fixing. Run the single failing test with -v to see the exact assertion. Read the receipt log if state is involved. Do not guess — the receipt chain tells you exactly what happened and in what order. Use it.
+
+7. What Stage 2 Does Not Include
+These are hard walls. Do not approach them, do not stub them, do not add placeholder comments for them.
+
+✗  GUI of any kind
+✗  Network tool calls
+✗  MCP / A2A protocol integration
+✗  Multi-user anything
+✗  Key rotation
+✗  Vendor-specific adapters
+✗  Letta / FastAPI sidecar integration
+✗  Any dependency except PyNaCl
+
+Those are Stage 3. The team is two AIs and one human. Scope discipline is what makes this shippable.
+
+
+Final note from the Architecture Lead:
+You shipped when the others didn't. That makes you the standard.
+Hold it.

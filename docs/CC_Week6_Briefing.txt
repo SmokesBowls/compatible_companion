@@ -1,0 +1,252 @@
+﻿COMPATIBLE COMPANION
+Week 6 Briefing — AI to AI
+From: Claude (Architecture Lead)
+To: Antigravity (Implementation Lead)
+Full editorial + self-testing authority granted
+
+0. State of the Stack
+Frozen. Do not touch.
+
+Stage
+Status
+Stage 1–2 (Weeks 1–4)
+17 tests green. Deterministic state machine, receipt chain, Ed25519 identity, cross-runtime portability, TTL, canon immutability, sandboxed policy, ZW block parser, profile layer, provenance drift audit.
+Stage 3 Week 5
+21 tests green. External tool gateway, allowlist enforcement at Gateway + Verifier (defense in depth), tool_receipts in COMMIT receipt, policy portability across capsule boundary.
+
+Week 6 opens with mandatory infrastructure hardening before any new surface is exposed. Three critiques from the Stage 3 audio review are acted on first. MCP adapter is the Week 6 proof — but it ships on a solid foundation, not before.
+
+1. Infrastructure Hardening (Do This Before MCP)
+Three issues were raised in the Stage 3 critique. All three must be resolved before the MCP surface opens. Rationale: MCP exposes run_cycle, mem_store, and mem_find to any model that can call tools. Every one of these issues becomes a remote attack vector the moment that surface exists.
+
+1.1  eval → AST Whitelist (Security — Highest Priority)
+Current state: policy_rules.predicate fields are Python expression strings evaluated with eval() behind a weakly sandboxed builtins dict. The sandbox is porous. Python's object model allows introspection through __class__.__mro__ chains to recover hidden modules regardless of the builtins restriction.
+
+Fix: replace eval with an AST-based evaluator. Parse the predicate string with ast.parse(), walk the tree, and reject any node type outside a strict whitelist before execution. Never eval an unknown AST structure.
+
+Allowed AST node types (whitelist):
+    • Compare — scope == 'core', len(tags) > 0
+    • BoolOp — and / or combinations of the above
+    • Name — only if the name is in: scope, tags, body_hash, content_type, entities
+    • Constant — string and integer literals only
+    • Call — only len(), nothing else
+
+Rejected immediately (any of these = rule refused, never executed):
+    • Import, ImportFrom
+    • Attribute (blocks __class__, __mro__ chains)
+    • Subscript (blocks dict/list access by arbitrary key)
+    • Any Call except len()
+    • Lambda, GeneratorExp, ListComp
+
+Implementation: new function eval_policy_predicate(predicate: str, context: dict) -> bool in policy.py (new file, ~60 lines). The existing sandboxed eval in runtime.py is deleted and replaced with a call to this function.
+
+New test — Test 22:
+A predicate containing __class__ is submitted as a policy rule. eval_policy_predicate must raise PolicyRuleError (not execute the expression). Verify no side effects occurred.
+
+1.2  Absolute Paths via pathlib (Reliability)
+Current state: log_path and db_path default to bare filenames (receipts.jsonl, test_receipts.jsonl). Path resolution depends on the working directory at runtime instantiation. This caused the missing-log confusion in Stage 1 and will cause session amnesia in any multi-session scenario.
+
+Fix: enforce an environment-first configuration strategy.
+
+    • Default data directory: pathlib.Path.home() / '.compatible'
+    • Default log: ~/.compatible/receipts.jsonl
+    • Default db: ~/.compatible/companion.db
+    • On AgentRuntime.__init__: if a relative path is detected AND a TEST_MODE environment variable is not set, emit a RuntimeWarning naming the path and the recommended absolute default.
+    • Tests continue to use tempfile.TemporaryDirectory() — they pass absolute paths explicitly. No test should rely on a bare filename.
+
+No new test needed — existing tests already use absolute tempfile paths. The fix is in AgentRuntime.__init__ and capsule.py path handling. Verify all 21 still pass after the change.
+
+1.3  KeyManager: Session-Resident Signing (Performance + TOCTOU)
+Current state: identity.py loads the private key from disk on every call to sign_payload(). This is a disk read per signature. At MCP scale (a model calling run_cycle in a loop), this is a measurable bottleneck and a TOCTOU window: the key file could be replaced between the check and the read.
+
+Fix: introduce KeyManager class. The private key is loaded once at session start and held in memory for the session lifetime. On session close, the key bytes are explicitly zeroed — do not rely on the garbage collector.
+
+KeyManager interface:
+class KeyManager:
+    def __init__(self, key_path: str):
+        # Load key once. Store as protected attribute.
+        self._signing_key = _load_key(key_path)
+
+    def sign(self, payload: bytes) -> str:
+        # Returns base64 signature. Pure memory op.
+        ...
+
+    def close(self):
+        # Explicitly zero key bytes. Call on runtime shutdown.
+        if self._signing_key is not None:
+            key_bytes = bytes(self._signing_key)
+            ctypes.memset(id(key_bytes), 0, len(key_bytes))
+            self._signing_key = None
+
+AgentRuntime.__init__ instantiates KeyManager if a key_path is provided. AgentRuntime.close() calls key_manager.close(). identity.py retains key generation and the verify function — those do not change.
+
+New test — Test 23:
+Instantiate KeyManager, call sign() twice with the same payload, verify both signatures are valid and identical (deterministic). Call close(). Verify that a subsequent sign() call raises (key has been zeroed). No disk reads after __init__.
+
+
+2. What Week 6 Proves
+The Compatible Companion runtime is accessible as a standard MCP server. Any MCP-compatible model can call mem_find, mem_store, run_cycle, and capsule_export as typed tools — over a local stdio transport — and every call goes through PLAN→ACT→VERIFY→COMMIT with a receipt. The runtime is not modified. The MCP adapter is a thin translation layer only.
+
+This is the first week where the companion has a surface accessible to an external model. The infrastructure hardening in Section 1 must be complete before this surface opens.
+
+2.1  Design Constraints
+    • MCP adapter is a separate file: cc/mcp_adapter.py. It does not modify runtime.py, memory.py, tools.py, or any frozen file.
+    • Transport: stdio (local process). No network listener in Week 6. Week 7 adds TCP if needed.
+    • Protocol: MCP JSON-RPC over stdio. Use the mcp stdlib package (pip install mcp — this is the one justified external dependency for this week).
+    • The adapter translates MCP tool calls into AgentRuntime method calls. It does not implement business logic.
+    • Every MCP tool call that mutates state goes through run_cycle(). Direct calls to memory.py are not exposed.
+
+2.2  Exposed MCP Tools (Four Only)
+
+Tool Name
+Maps To
+Mutates State
+mem_find
+memory.mem_find()
+No — read only
+mem_store
+rt.run_cycle() with mem_store plan
+Yes — full cycle
+run_cycle
+rt.run_cycle() with caller-supplied plan
+Yes — full cycle
+capsule_export
+capsule.export()
+No — read only
+
+mem_store and run_cycle are the only mutation paths. Both go through the full state machine. Neither bypasses the Verifier.
+
+2.3  New File: cc/mcp_adapter.py
+Skeleton (Antigravity fills in the implementation):
+
+"""
+cc/mcp_adapter.py — MCP stdio adapter for Compatible Companion.
+
+Exposes four tools: mem_find, mem_store, run_cycle, capsule_export.
+All mutation goes through AgentRuntime.run_cycle().
+This file contains no business logic. It is a translation layer only.
+"""
+
+import asyncio
+import json
+from mcp.server import Server
+from mcp.server.stdio import stdio_server
+from mcp import types
+from cc.runtime import AgentRuntime
+from cc.capsule import export_capsule
+from cc.identity import KeyManager
+
+
+def build_server(rt: AgentRuntime, key_manager: KeyManager) -> Server:
+    server = Server("compatible-companion")
+
+    @server.list_tools()
+    async def list_tools():
+        return [
+            types.Tool(name="mem_find", description="Query memory units.", inputSchema={...}),
+            types.Tool(name="mem_store", description="Store a memory unit.", inputSchema={...}),
+            types.Tool(name="run_cycle", description="Run a full PLAN→ACT→VERIFY→COMMIT cycle.", inputSchema={...}),
+            types.Tool(name="capsule_export", description="Export companion state as a capsule.", inputSchema={...}),
+        ]
+
+    @server.call_tool()
+    async def call_tool(name: str, arguments: dict):
+        if name == "mem_find":
+            results = rt.mem_store.mem_find(**arguments)
+            return [types.TextContent(type='text', text=json.dumps(results))]
+        elif name == "mem_store":
+            # Must go through run_cycle — no direct writes
+            result = rt.run_cycle(plan=arguments, act_fn=_mem_store_act, invariants=[])
+            return [types.TextContent(type='text', text=json.dumps({'outcome': result}))]
+        elif name == "run_cycle":
+            result = rt.run_cycle(**arguments)
+            return [types.TextContent(type='text', text=json.dumps({'outcome': result}))]
+        elif name == "capsule_export":
+            caps = export_capsule(rt, key_manager)
+            return [types.TextContent(type='text', text=json.dumps(caps))]
+        raise ValueError(f"Unknown tool: {name}")
+
+
+async def main():
+    rt = AgentRuntime()   # loads from ~/.compatible by default (Section 1.2)
+    km = KeyManager(key_path=str(pathlib.Path.home() / '.compatible' / 'identity.key'))
+    server = build_server(rt, km)
+    async with stdio_server() as (r, w):
+        await server.run(r, w, server.create_initialization_options())
+
+
+if __name__ == '__main__':
+    asyncio.run(main())
+
+2.4  Input Schemas (Define These — They Are the Contract)
+Each tool's inputSchema must be complete JSON Schema. Antigravity defines these based on the existing method signatures in memory.py and runtime.py. The schemas become the source of truth for what the MCP client can pass.
+
+Minimum required fields per tool:
+    • mem_find: scope (string, optional), tags (array of strings, optional), limit (integer, optional, default 10)
+    • mem_store: unit_id (string), scope (string), body (string), tags (array, optional), ttl_seconds (integer, optional)
+    • run_cycle: plan (object), act_fn is not exposed — the adapter provides it internally
+    • capsule_export: no required fields
+
+
+3. The Four New Tests (22–25)
+Tests 22–23 cover the infrastructure hardening. Tests 24–25 cover the MCP adapter. Target: 25 passed.
+
+Test 22 — AST Whitelist Blocks Injection
+Submit a policy predicate containing __class__.__mro__. eval_policy_predicate must raise PolicyRuleError before execution. No side effects. Verify a clean predicate (scope == 'core') still evaluates correctly.
+
+Test 23 — KeyManager Session-Resident + Zero on Close
+Instantiate KeyManager from a temp key file. Call sign() twice — verify both signatures valid, no disk reads after __init__. Call close(). Verify subsequent sign() raises RuntimeError. Signing is a pure memory operation during the session.
+
+Test 24 — MCP mem_find Returns Results
+Instantiate the MCP server with a runtime that has one committed unit. Call the mem_find tool via the MCP call_tool handler directly (no stdio transport needed for the unit test). Verify the result contains the expected unit. No state mutation occurred.
+
+Test 25 — MCP mem_store Goes Through Full Cycle
+Call the mem_store tool via call_tool. Verify outcome is COMMIT. Verify the unit appears in committed storage via mem_find. Verify a COMMIT receipt exists in the log containing the unit's body_hash. No direct write to memory.py occurred — the full PLAN→ACT→VERIFY→COMMIT cycle ran.
+
+
+4. Execution Order
+Do not open the MCP surface until the infrastructure hardening is green. If Step 1 is not 21 green, stop.
+
+Step
+Action
+1
+Run existing suite. 21 passed. If anything is red, stop.
+2
+Create cc/policy.py. Implement eval_policy_predicate() with AST whitelist. Delete eval() from runtime.py. Wire in the new function. Write Test 22. Green.
+3
+Fix AgentRuntime.__init__ path handling. Use pathlib. Add relative-path warning. Verify all 21 still pass — no new test needed here.
+4
+Add KeyManager to identity.py. Wire into AgentRuntime.__init__ and AgentRuntime.close(). Write Test 23. Green.
+5
+pip install mcp. Write cc/mcp_adapter.py skeleton. Define all four tool input schemas. No tests yet.
+6
+Write Test 24 (mem_find via MCP). Green. Write Test 25 (mem_store via MCP). Green.
+7
+Run full suite: python3 -m pytest cc/tests/test_mvp.py -v. Must show 25 passed, 0 warnings.
+8
+Smoke test the stdio server manually: echo a mem_find JSON-RPC call into mcp_adapter.py and verify a valid response comes back on stdout.
+
+
+5. What Week 6 Does NOT Touch
+
+✓  The state machine phases (PLAN→ACT→VERIFY→COMMIT) — structure frozen
+✓  The receipt chain hashing algorithm — frozen
+✓  zw_block.py — frozen
+✓  Canon immutability rule — frozen
+✓  TTL enforcement — frozen
+✓  Tool gateway allowlist enforcement — frozen
+✗  TCP/network MCP transport — Week 7
+✗  A2A — Week 7
+✗  Multi-user, multi-session — Week 7
+✗  Snapshot checkpointing — Stage 4
+✗  Real TTS, Godot, or any downstream consumer — Stage 4
+
+
+6. Acceptance Criteria
+python3 -m pytest cc/tests/test_mvp.py → 25 passed. That is the only verdict.
+
+When 25 are green and the stdio smoke test passes, Week 6 is done.
+
+Next: Week 7 — the runtime becomes a network-accessible server. Any MCP-compatible model on the local network can connect. We scope that together when the green line holds.
+
+The substrate is hardened. Now it has a voice. Ship the green line.

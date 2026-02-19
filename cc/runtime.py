@@ -3,10 +3,13 @@ import hashlib
 import time
 import uuid
 import os
+import pathlib
+import warnings
 from typing import Dict, Any, List, Optional
 from .memory import MemoryStore
-from .tools import TypedToolGateway
 from .zw_block import ZWBlock
+from .policy import eval_policy_predicate, PolicyRuleError
+from .identity import KeyManager, sign_payload
 
 class Plan:
     def __init__(self, action: str, scope: str, rollback_anchor: Optional[str] = None, tool_refs: List[str] = None):
@@ -15,15 +18,47 @@ class Plan:
         self.rollback_anchor = rollback_anchor
         self.tool_refs = tool_refs or []
 
-class CompanionRuntime:
+class AgentRuntime:
     """
-    CompanionRuntime orchestrates the PLAN -> ACT -> VERIFY -> COMMIT cycle.
-    It manages the SQLite MemoryStore and the JSONL Receipt Log.
+    AgentRuntime (formerly CompanionRuntime) orchestrates the PLAN -> ACT -> VERIFY -> COMMIT cycle.
     """
-    def __init__(self, db_path: str = ":memory:", log_path: str = "receipts.jsonl"):
+    def __init__(self, db_path: str = None, log_path: str = None, tool_allowlist: list[str] = None):
+        # ── PATH HARDENING (Week 6) ───────────────────────────────────
+        base_dir = pathlib.Path.home() / '.compatible'
+        
+        # Determine defaults
+        default_db = str(base_dir / 'companion.db')
+        default_log = str(base_dir / 'receipts.jsonl')
+        
+        # Test mode suppresses warnings and allows relative paths/memory
+        test_mode = os.environ.get('TEST_MODE') == '1'
+        
+        db_path = db_path or default_db
+        log_path = log_path or default_log
+        
+        if not test_mode:
+            if not os.path.isabs(db_path):
+                warnings.warn(f"Relative db_path '{db_path}' detected. Recommended: '{default_db}'", RuntimeWarning)
+            if not os.path.isabs(log_path):
+                warnings.warn(f"Relative log_path '{log_path}' detected. Recommended: '{default_log}'", RuntimeWarning)
+            # Ensure base directory exists in production
+            os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
+            os.makedirs(os.path.dirname(os.path.abspath(log_path)), exist_ok=True)
+
         self.memory = MemoryStore(db_path)
-        self.gateway = TypedToolGateway()
+        self.db_path = db_path
+        self.mem_store = self.memory # Alias for briefing tests
+        self.tool_allowlist = list(tool_allowlist or [])
+        self._last_act_result = {}
         self.log_path = log_path
+        
+        # ── IDENTITY HARDENING (Week 6) ──────────────────────────────
+        self.key_manager = None
+        key_path = os.environ.get('CC_KEY_PATH') or str(base_dir / 'identity.key')
+        if os.path.exists(key_path):
+            self.key_manager = KeyManager(key_path)
+        elif os.path.exists('cc_identity.key'):
+            self.key_manager = KeyManager('cc_identity.key')
         # Initial hash for an empty chain
         self.receipt_log_head = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         self._load_log_head()
@@ -45,108 +80,266 @@ class CompanionRuntime:
 
     def _append_to_log(self, receipt: Dict[str, Any]):
         """Appends a receipt to the JSONL log and updates the chain tip."""
-        receipt_bytes = json.dumps(receipt, sort_keys=True).encode("utf-8")
+        receipt_bytes = json.dumps(receipt, sort_keys=True, separators=(',', ':')).encode("utf-8")
         with open(self.log_path, "ab") as f:
             f.write(receipt_bytes + b"\n")
         self.receipt_log_head = hashlib.sha256(receipt_bytes).hexdigest()
         print(f"[LOG] Appended {receipt['receipt_id']} | Log Head: {self.receipt_log_head[:12]}...")
 
+    def current_state_hash(self) -> str:
+        """Returns the most recent committed state_hash."""
+        return self.last_state_hash
+
     def ingest(self, text: str, scope: str = "core") -> Dict[str, Any]:
         """
-        Runs a full cycle for a text input.
+        Legacy wrapper for text input.
         """
-        input_hash = hashlib.sha256(text.encode()).hexdigest()
-        print(f"\n[INGEST] Input: '{text[:30]}...' | Hash: {input_hash[:12]}...")
+        plan = {
+            'action': 'ingest',
+            'scope': scope,
+            'text': text
+        }
         
+        def act_fn(p):
+            # Simplified ACT for ingest
+            unit_id = f"unit_{str(uuid.uuid4())[:8]}"
+            block = ZWBlock(p['text'])
+            return {
+                'action': 'mem_store',
+                'unit_id': unit_id,
+                'scope': p['scope'],
+                'body': p['text'],
+                'body_hash': block.hash,
+                'tags': []
+            }
+
+        # run_cycle returns a verdict string for Test 14/15, 
+        # but ingest needs to return the receipt dict for Stage 1/2.
+        # I'll modify run_cycle to store the last receipt.
+        self.run_cycle(plan, act_fn, invariants=[])
+        return self.last_receipt
+
+    def run_cycle(self, plan: Dict[str, Any], act_fn, invariants: List = None) -> str:
+        """
+        Orchestrates PLAN -> ACT -> VERIFY -> COMMIT/FAIL.
+        """
         # 1. PLAN
         self.phase = "PLAN"
-        plan = Plan(action="ingest", scope=scope, rollback_anchor=self.last_snapshot_id)
-        
+        self.current_plan = plan
+        input_hash = hashlib.sha256(json.dumps(plan, sort_keys=True).encode()).hexdigest()
+
         # 2. ACT
         self.phase = "ACT"
-        # In this simple MVP, ACT creates a unit from the input text
-        unit_id = f"unit_{str(uuid.uuid4())[:8]}"
-        block = ZWBlock(text)
-        unit = {
-            "id": unit_id,
-            "scope": scope,
-            "content_type": "plain",
-            "body": text,
-            "body_hash": block.hash,
-            "tags": [],
-            "entities": []
-        }
-        self.memory.stage_unit(unit)
-        staged_output = {"units": [unit], "output_hash": hashlib.sha256(json.dumps(unit).encode()).hexdigest()}
+        act_result = act_fn(plan)
+        self._last_act_result = act_result if isinstance(act_result, dict) else {}
         
+        # In MVP, if act_result is a unit or contains unit data, we stage it
+        if isinstance(act_result, dict):
+            if act_result.get('action') == 'mem_store' or 'unit_id' in act_result:
+                # Normalizing for memory.py
+                unit = {
+                    'unit_id':   act_result.get('unit_id'),
+                    'scope':     act_result.get('scope'),
+                    'body':      act_result.get('body'),
+                    'body_hash': act_result.get('body_hash') or hashlib.sha256(json.dumps(act_result.get('body'), sort_keys=True).encode()).hexdigest(),
+                    'tags':      act_result.get('tags', []),
+                    'ttl_expires_at': act_result.get('ttl_expires_at')
+                }
+                self.memory.stage_unit(unit)
+            elif 'units' in act_result:
+                for u in act_result['units']:
+                    self.memory.stage_unit(u)
+
         # 3. VERIFY
         self.phase = "VERIFY"
-        verdict = "PASS"
-        if not self._run_invariants(unit):
-            verdict = "FAIL"
         
-        # 4. COMMIT or DISCARD
-        receipt_id = "rcpt_" + str(uuid.uuid4())[:8]
-        if verdict == "PASS":
-            self.phase = "COMMIT"
-            snapshot_id = "snap_" + str(uuid.uuid4())[:8]
-            self.memory.commit_staged(receipt_id, snapshot_id)
-            state_hash = self.memory.derive_state_hash(self.receipt_log_head)
-            
-            receipt = {
-                "receipt_id": receipt_id,
-                "phase": "COMMIT",
-                "verdict": "PASS",
-                "snapshot_id": snapshot_id,
-                "input_hash": input_hash,
-                "output_hash": staged_output["output_hash"],
-                "prev_receipt_hash": self.receipt_log_head,
-                "state_hash": state_hash,
-                "ts": int(time.time()),
-                # We store the unit data in the receipt for replayability in MVP
-                "data": {"units": [unit]}
-            }
-            self._append_to_log(receipt)
-            self.last_snapshot_id = snapshot_id
-            self.last_state_hash = state_hash
-            print(f"[COMMIT] {snapshot_id} | State Hash: {state_hash[:12]}...")
-            self.phase = "IDLE"
-            return receipt
-        else:
-            self.phase = "DISCARD"
-            self.memory.clear_staged()
-            receipt = {
-                "receipt_id": receipt_id,
-                "phase": "DISCARD",
-                "verdict": "FAIL",
-                "input_hash": input_hash,
-                "prev_receipt_hash": self.receipt_log_head,
-                "ts": int(time.time())
-            }
-            self._append_to_log(receipt)
-            print(f"[DISCARD] Verification failed for {receipt_id}")
-            self.phase = "IDLE"
-            return receipt
+        # 1. Canon immutability
+        error = self._verify_canon_immutability(self.memory.staged_units, self.memory.conn)
+        if error:
+            return self._emit_fail(error, input_hash)
 
-    def _run_invariants(self, unit: Dict[str, Any]) -> bool:
-        """Evaluates built-in and policy-based invariants."""
-        # Built-in: non-empty body
-        if not unit.get("body"):
-            return False
-            
-        # Policy rules
-        rules = self.memory.get_policy_rules(unit.get("scope"))
-        for rule in rules:
+        # 2. Tool receipt integrity (NEW)
+        error = self._verify_tool_receipts(self._last_act_result, self.tool_allowlist)
+        if error:
+            return self._emit_fail(error, input_hash)
+
+        # 3. Policy Rules
+        error = self._eval_policy_rules(self.memory.staged_units, self.memory.conn)
+        if error:
+            return self._emit_fail(error, input_hash)
+
+        # 4. COMMIT
+        self.phase = "COMMIT"
+        
+        # Capture staged units BEFORE commit_staged clears them
+        staged_copy = []
+        for u in self.memory.staged_units:
+            # Normalize to unit_id for the receipt data
+            c = dict(u)
+            if 'unit_id' not in c and 'id' in c:
+                c['unit_id'] = c.pop('id')
+            staged_copy.append(c)
+
+        receipt_id = "rcpt_" + str(uuid.uuid4())[:8]
+        snapshot_id = "snap_" + str(uuid.uuid4())[:8]
+        self.memory.commit_staged(receipt_id, snapshot_id)
+        
+        state_hash = self.memory.derive_state_hash(self.receipt_log_head)
+        
+        receipt = {
+            "receipt_id": receipt_id,
+            "phase": "COMMIT",
+            "outcome": "COMMIT",  # Consistency
+            "verdict": "PASS",
+            "snapshot_id": snapshot_id,
+            "input_hash": input_hash,
+            "prev_receipt_hash": self.receipt_log_head,
+            "state_hash": state_hash,
+            "ts": int(time.time()),
+            # We store the unit data in the receipt for replayability in MVP
+            # "data": {"units": [u for u in self.memory.staged_units]} # staged_units is still there? 
+                                                                    # No, memory.py clears it.
+                                                                    # I should capture it before commit.
+        }
+        # Actually memory.py clear_staged happens AFTER insertion. 
+        # But for receipt data, I'll capture it.
+        receipt["data"] = {"units": staged_copy}
+        receipt["staged_units"] = staged_copy
+        receipt["tool_receipts"] = self._last_act_result.get('tool_receipts', [])
+        
+        self._append_to_log(receipt)
+        self.last_snapshot_id = snapshot_id
+        self.last_state_hash = state_hash
+        self.last_receipt = receipt
+        self.phase = "IDLE"
+        return "COMMIT"
+
+    def _emit_fail(self, error_msg: str, input_hash: str) -> str:
+        receipt_id = "rcpt_" + str(uuid.uuid4())[:8]
+        receipt = {
+            "receipt_id": receipt_id,
+            "phase": self.phase,
+            "verdict": "FAIL",
+            "outcome": "FAIL",    # Consistency
+            "error": error_msg,
+            "input_hash": input_hash,
+            "prev_receipt_hash": self.receipt_log_head,
+            "ts": int(time.time())
+        }
+        # 5. SIGN (Deterministic if key available)
+        payload = json.dumps(receipt, sort_keys=True).encode()
+        if self.key_manager:
+            receipt["sig_b64"] = self.key_manager.sign(payload)
+        else:
+            # Fallback to file-based legacy signing if manager not active
             try:
-                # Weak eval stub
-                if not eval(rule["predicate"], {"body": unit["body"]}):
-                    if rule["on_fail"] == "block":
-                        print(f"[VERIFY] Rule {rule['rule_id']} failed (BLOCK)")
-                        return False
-            except Exception as e:
-                print(f"[VERIFY] Error evaluating rule {rule['rule_id']}: {e}")
-                return False
-        return True
+                receipt["sig_b64"] = sign_payload(payload)
+            except:
+                pass 
+
+        self._append_to_log(receipt)
+        self.memory.clear_staged()
+        self.last_receipt = receipt
+        self.phase = "IDLE"
+        return "FAIL"
+
+    def close(self):
+        """Shutdown session and zero key memory."""
+        if hasattr(self, 'key_manager') and self.key_manager:
+            self.key_manager.close()
+        if hasattr(self, 'memory') and self.memory:
+            self.memory.close()
+
+    def _verify_tool_receipts(self, act_result: dict, allowlist: list[str]) -> str | None:
+        """
+        Verifier check: no committed state transition may rely on an
+        unauthorized external call.
+        """
+        receipts  = act_result.get('tool_receipts', [])
+        allowed   = frozenset(allowlist)
+        for r in receipts:
+            if r.get('network_call_made') and r.get('host') not in allowed:
+                return (
+                    f"verifier_tool_allowlist_violation: "
+                    f"network call made to unauthorized host '{r['host']}'"
+                )
+        return None
+
+    def _verify_canon_immutability(self, staged_writes: list, db_conn) -> str | None:   
+        """Returns error if canon unit already committed."""
+        cursor = db_conn.cursor()
+        for write in staged_writes:
+            if write.get('scope') == 'canon':
+                cursor.execute(
+                    'SELECT 1 FROM units WHERE unit_id = ? LIMIT 1',
+                    (write.get('unit_id') or write.get('id'),)
+                )
+                if cursor.fetchone() is not None:
+                    return (
+                        f"canon_immutability_violation: unit '{write.get('unit_id') or write.get('id')}'"
+                        " already committed. Canon units are write-once."
+                    )
+        return None
+
+    def _eval_policy_rules(self, staged_writes: list, db_conn) -> str | None:
+        """Evaluates active policy rules (sandboxed)."""
+        cursor = db_conn.cursor()
+        cursor.execute("SELECT rule_id, description, predicate FROM policy_rules WHERE is_active = 1")
+        rules = cursor.fetchall()
+
+        for write in staged_writes:
+            # Special case for body if it's still a string (Stage 1/2) 
+            # vs dict (Week 3)
+            body = write.get('body')
+            # The briefing unit_ctx uses body_hash, tags, scope
+            unit_ctx = {
+                'scope':     write.get('scope', ''),
+                'tags':      write.get('tags', []),
+                'body_hash': write.get('body_hash', ''),
+                'content_type': write.get('content_type', 'plain'),
+                'entities':  write.get('entities', []),
+            }
+            for rule_id, description, predicate in rules:
+                try:
+                    if not eval_policy_predicate(predicate, unit_ctx):
+                        return f'policy_rule_violation: {rule_id}: {description}'
+                except PolicyRuleError as exc:
+                    return f'policy_rule_error: {rule_id}: {exc}'
+                except Exception as exc:
+                    return f'policy_rule_evaluation_error: {rule_id}: {exc}'
+        return None
+
+    def apply_receipt(self, receipt: dict) -> None:
+        """
+        Replay a committed receipt directly into storage.
+        Called only during log replay. Never called from production write paths.
+        Raises ValueError if receipt outcome is not COMMIT.
+        """
+        if receipt.get('outcome') != 'COMMIT':
+            return  # skip FAIL receipts — they left no state
+
+        # Re-apply staged writes from the receipt
+        # We check staged_units (Week 8) or fall back to data.units (legacy)
+        units = receipt.get('staged_units')
+        if units is None:
+            units = receipt.get('data', {}).get('units', [])
+
+        for unit in units:
+            # Re-normalize for MemoryStore
+            u = dict(unit)
+            if 'unit_id' not in u and 'id' in u:
+                u['unit_id'] = u.pop('id')
+            if 'body_hash' not in u:
+                u['body_hash'] = hashlib.sha256(json.dumps(u['body'], sort_keys=True).encode()).hexdigest()
+            self.memory.stage_unit(u)
+
+        self.memory.commit_staged(
+            receipt.get('receipt_id', 'rcpt_replay'),
+            receipt.get('snapshot_id', 'snap_replay')
+        )
+
+        # Update state hash - IMPORTANT: do this AFTER commit so derive_state_hash works if needed
+        self.last_state_hash = receipt.get('state_hash')
 
     def replay_log(self, log_path: str):
         """
@@ -176,23 +369,17 @@ class CompanionRuntime:
                     )
                 
                 # Update chain tracking for the NEXT receipt
-                receipt_bytes = json.dumps(receipt, sort_keys=True).encode("utf-8")
+                receipt_bytes = json.dumps(receipt, sort_keys=True, separators=(',', ':')).encode("utf-8")
                 expected_prev = hashlib.sha256(receipt_bytes).hexdigest()
                 self.receipt_log_head = expected_prev
                 
                 if receipt["phase"] == "COMMIT" and receipt["verdict"] == "PASS":
-                    # Apply units in data
-                    for unit in receipt["data"]["units"]:
-                        self.memory.stage_unit(unit)
-                    self.memory.commit_staged(receipt["receipt_id"], receipt["snapshot_id"])
-                    
+                    self.apply_receipt(receipt)
                     self.last_snapshot_id = receipt["snapshot_id"]
-                    self.last_state_hash = receipt["state_hash"]
                     print(f"[REPLAY] Applied {receipt['snapshot_id']} | State Hash: {self.last_state_hash[:12]}...")
                 else:
                     print(f"[REPLAY] Skipped {receipt.get('phase')} receipt {receipt.get('receipt_id')}")
         
         print(f"[REPLAY] Finished. Final State Hash: {self.last_state_hash[:12] if self.last_state_hash else 'N/A'}")
 
-    def close(self):
-        self.memory.close()
+CompanionRuntime = AgentRuntime

@@ -1,69 +1,93 @@
 import json
-import hashlib
-import time
-import uuid
-from typing import Dict, Any, List, Callable, Optional
+import urllib.request
+import urllib.error
+from datetime import datetime, timezone
 
-class TypedToolGateway:
+
+class ToolGatewayError(Exception):
+    """Raised when ToolGateway blocks a call due to allowlist violation."""
+    def __init__(self, receipt: dict):
+        self.receipt = receipt
+        super().__init__(receipt['error'])
+
+
+class ToolGateway:
     """
-    TypedToolGateway manages tool registration and execution with allowlist enforcement.
+    Typed external tool call gateway with allowlist enforcement.
+
+    The allowlist is a set of hostnames (no scheme, no path).
+    Example: ['api.example.com', 'hooks.slack.com']
+
+    Callers receive a tool_receipt dict on success.
+    ToolGatewayError is raised (carrying a tool_receipt) on block.
+    Network errors return a tool_receipt with error set.
     """
-    def __init__(self, allowlist: List[str] = None):
-        self.tools: Dict[str, Dict[str, Any]] = {}
-        self.allowlist = allowlist or []
-        self.receipts: List[Dict[str, Any]] = []
 
-    def register_tool(self, name: str, func: Callable, schema: Dict[str, Any] = None):
-        self.tools[name] = {
-            "func": func,
-            "schema": schema,
-            "name": name
-        }
+    def __init__(self, allowlist: list[str]):
+        self._allowlist = frozenset(allowlist)
 
-    def set_allowlist(self, allowlist: List[str]):
-        self.allowlist = allowlist
-
-    def call_tool(self, name: str, **kwargs) -> Any:
+    def call(
+        self,
+        tool_name: str,
+        host: str,
+        path: str,
+        method: str = 'GET',
+        payload: dict = None,
+    ) -> dict:
         """
-        Executes a registered tool if it is in the allowlist.
-        Emits a tool_receipt for every call.
-        """
-        if name not in self.allowlist:
-            raise PermissionError(f"Tool '{name}' is not in the allowlist.")
-        
-        if name not in self.tools:
-            raise ValueError(f"Tool '{name}' is not registered.")
+        Make one external tool call.
 
-        tool = self.tools[name]
-        
-        # In Week 1, we focus on the record-keeping and allowlist.
-        # Schema validation is optional/stubbed.
-        
+        Returns a tool_receipt dict.
+        Raises ToolGatewayError (with receipt) if host not in allowlist.
+        """
+        ts = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+
+        # ── ALLOWLIST CHECK (before any network I/O) ──────────────
+        if host not in self._allowlist:
+            receipt = {
+                'tool_name': tool_name, 'host': host, 'path': path,
+                'method': method, 'allowed': False,
+                'network_call_made': False,  # guaranteed: no bytes sent
+                'status_code': None, 'response_body': None, 'ts': ts,
+                'error': f"host '{host}' not in tool_allowlist",
+            }
+            raise ToolGatewayError(receipt)
+
+        # ── NETWORK CALL ──────────────────────────────────────────
+        url = f'https://{host}{path}'
+        body_bytes = json.dumps(payload or {}).encode() if payload else None
+        req = urllib.request.Request(
+            url, data=body_bytes, method=method,
+            headers={'Content-Type': 'application/json',
+                     'Accept': 'application/json'},
+        )
         try:
-            result = tool["func"](**kwargs)
-            verdict = "PASS"
-        except Exception as e:
-            result = str(e)
-            verdict = "FAIL"
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                response_body = resp.read().decode('utf-8', errors='replace')
+                status_code   = resp.status
+        except urllib.error.HTTPError as e:
+            response_body = e.read().decode('utf-8', errors='replace')
+            status_code   = e.code
+            return {
+                'tool_name': tool_name, 'host': host, 'path': path,
+                'method': method, 'allowed': True,
+                'network_call_made': True,
+                'status_code': status_code, 'response_body': response_body,
+                'ts': ts, 'error': f'HTTP {status_code}',
+            }
+        except Exception as exc:
+            return {
+                'tool_name': tool_name, 'host': host, 'path': path,
+                'method': method, 'allowed': True,
+                'network_call_made': True,   # attempt was made
+                'status_code': None, 'response_body': None,
+                'ts': ts, 'error': str(exc),
+            }
 
-        receipt = {
-            "tool_call_id": str(uuid.uuid4()),
-            "name": name,
-            "inputs": kwargs,
-            "output": result if verdict == "PASS" else None,
-            "error": result if verdict == "FAIL" else None,
-            "verdict": verdict,
-            "ts": int(time.time())
+        return {
+            'tool_name': tool_name, 'host': host, 'path': path,
+            'method': method, 'allowed': True,
+            'network_call_made': True,
+            'status_code': status_code, 'response_body': response_body,
+            'ts': ts, 'error': None,
         }
-        self.receipts.append(receipt)
-        
-        if verdict == "FAIL":
-            raise RuntimeError(f"Tool execution failed: {result}")
-            
-        return result
-
-    def get_receipts(self) -> List[Dict[str, Any]]:
-        return self.receipts
-
-    def clear_receipts(self):
-        self.receipts = []

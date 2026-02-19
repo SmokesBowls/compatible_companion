@@ -1,0 +1,2024 @@
+
+Hint: type caja to open the file manager
+
+(base) burdens@pop-os:~/compatible$ python3 -m pytest cc/tests/test_mvp.py -v -s
+============================= test session starts ==============================
+platform linux -- Python 3.13.11, pytest-9.0.2, pluggy-1.5.0 -- /home/burdens/miniconda3/bin/python3
+cachedir: .pytest_cache
+rootdir: /home/burdens/compatible
+plugins: cov-7.0.0, asyncio-1.3.0, anyio-4.12.1
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 10 items                                                             
+
+cc/tests/test_mvp.py::test_zw_block_canonicalization PASSED
+cc/tests/test_mvp.py::test_full_cycle_success 
+[INGEST] Input: 'User preference: dark mode...' | Hash: 4ed32e85a869...
+[LOG] Appended rcpt_aa6183c3 | Log Head: c57780e617bf...
+[COMMIT] snap_49d2b87c | State Hash: f2dc845c8947...
+PASSED
+cc/tests/test_mvp.py::test_verify_failure 
+[INGEST] Input: 'This has forbidden word...' | Hash: 3e88cd690bd1...
+[VERIFY] Rule rule1 failed (BLOCK)
+[LOG] Appended rcpt_2b8bcb24 | Log Head: 35e870c25209...
+[DISCARD] Verification failed for rcpt_2b8bcb24
+PASSED
+cc/tests/test_mvp.py::test_deterministic_replay 
+[INGEST] Input: 'Memory unit A...' | Hash: 124e952ba58c...
+[LOG] Appended rcpt_375e978f | Log Head: c811c1e77158...
+[COMMIT] snap_11dc0330 | State Hash: d2c3fc0a4c99...
+
+[INGEST] Input: 'Memory unit B...' | Hash: d0626a5bdddb...
+[LOG] Appended rcpt_79456d35 | Log Head: 6bcf22c90fe5...
+[COMMIT] snap_719a026f | State Hash: deabb3df8849...
+[REPLAY] Replaying test_receipts.jsonl...
+[REPLAY] Applied snap_11dc0330 | State Hash: d2c3fc0a4c99...
+[REPLAY] Applied snap_719a026f | State Hash: deabb3df8849...
+[REPLAY] Finished. Final State Hash: deabb3df8849
+SUCCESS: State hashes match exactly! Deterministic replay confirmed.
+Original:  deabb3df8849ac7fc51d13e484c6d2dd5fd690e45c43d65d1643d6ee7f2280d2
+Replayed:  deabb3df8849ac7fc51d13e484c6d2dd5fd690e45c43d65d1643d6ee7f2280d2
+PASSED
+cc/tests/test_mvp.py::test_capsule_export 
+[INGEST] Input: 'Core knowledge...' | Hash: 7d5e16f2bf0a...
+[LOG] Appended rcpt_ce920bce | Log Head: d3d29cd14202...
+[COMMIT] snap_f742873d | State Hash: 8359405a726c...
+PASSED
+cc/tests/test_mvp.py::test_sign_and_verify PASSED
+cc/tests/test_mvp.py::test_tampered_sig_rejected PASSED
+cc/tests/test_mvp.py::test_capsule_export_import_roundtrip 
+[INGEST] Input: 'Test Unit A...' | Hash: 3a4f3bc44f32...
+[LOG] Appended rcpt_a8e6f51d | Log Head: f4a0172ad5ed...
+[COMMIT] snap_4cf2bf34 | State Hash: 9b5ff48282f9...
+PASSED
+cc/tests/test_mvp.py::test_capsule_import_rejects_bad_sig 
+[INGEST] Input: 'Secure Unit...' | Hash: b21b31cb5745...
+[LOG] Appended rcpt_09feb0e9 | Log Head: 5a0f900d6081...
+[COMMIT] snap_6cf23109 | State Hash: 25a36052e426...
+PASSED
+cc/tests/test_mvp.py::test_conflict_keep_local PASSED
+
+============================== 10 passed in 0.41s ==============================
+(base) burdens@pop-os:~/compatible$ sed -i '2s/prev_receipt_hash": "/prev_receipt_hash": "XXXXXX/' test_receipts.jsonl
+sed: can't read test_receipts.jsonl: No such file or directory
+(base) burdens@pop-os:~/compatible$ cd docs
+(base) burdens@pop-os:~/compatible/docs$ sed -i '2s/prev_receipt_hash": "/prev_receipt_hash": "XXXXXX/' test_receipts.jsonl
+sed: can't read test_receipts.jsonl: No such file or directory
+(base) burdens@pop-os:~/compatible/docs$ ls
+ CC_Stage2_Briefing.docx     duties.txt             prespecs.txt
+ CC_Stage2_Briefing.txt      first_checkpoint.txt   test_output.txt
+'compatible companion.txt'  'grok plotting.txt'
+(base) burdens@pop-os:~/compatible/docs$ python3 -m pytest cc/tests/test_mvp.py -v -s
+============================= test session starts ==============================
+platform linux -- Python 3.13.11, pytest-9.0.2, pluggy-1.5.0 -- /home/burdens/miniconda3/bin/python3
+cachedir: .pytest_cache
+rootdir: /home/burdens/compatible/docs
+plugins: cov-7.0.0, asyncio-1.3.0, anyio-4.12.1
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 0 items                                                              
+
+============================ no tests ran in 0.00s =============================
+ERROR: file or directory not found: cc/tests/test_mvp.py
+
+(base) burdens@pop-os:~/compatible/docs$ cd ~/compatible
+python3 -m pytest cc/tests/test_mvp.py -v -s 2>&1 | tee docs/test_output.txt
+============================= test session starts ==============================
+platform linux -- Python 3.13.11, pytest-9.0.2, pluggy-1.5.0 -- /home/burdens/miniconda3/bin/python3
+cachedir: .pytest_cache
+rootdir: /home/burdens/compatible
+plugins: cov-7.0.0, asyncio-1.3.0, anyio-4.12.1
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 11 items
+
+cc/tests/test_mvp.py::test_zw_block_canonicalization PASSED
+cc/tests/test_mvp.py::test_full_cycle_success 
+[INGEST] Input: 'User preference: dark mode...' | Hash: 4ed32e85a869...
+[LOG] Appended rcpt_9f3243fd | Log Head: df426ac76c0c...
+[COMMIT] snap_031a7512 | State Hash: f2dc845c8947...
+PASSED
+cc/tests/test_mvp.py::test_verify_failure 
+[INGEST] Input: 'This has forbidden word...' | Hash: 3e88cd690bd1...
+[VERIFY] Rule rule1 failed (BLOCK)
+[LOG] Appended rcpt_23535fb9 | Log Head: 57feed570f48...
+[DISCARD] Verification failed for rcpt_23535fb9
+PASSED
+cc/tests/test_mvp.py::test_deterministic_replay 
+[INGEST] Input: 'Memory unit A...' | Hash: 124e952ba58c...
+[LOG] Appended rcpt_84f5c7f4 | Log Head: 19d698db30cf...
+[COMMIT] snap_9e736dbe | State Hash: d2c3fc0a4c99...
+
+[INGEST] Input: 'Memory unit B...' | Hash: d0626a5bdddb...
+[LOG] Appended rcpt_d309eadd | Log Head: 1d7658ee348b...
+[COMMIT] snap_7b22cdd9 | State Hash: f4eadd10ba3f...
+[REPLAY] Replaying test_receipts.jsonl...
+[REPLAY] Applied snap_9e736dbe | State Hash: d2c3fc0a4c99...
+[REPLAY] Applied snap_7b22cdd9 | State Hash: f4eadd10ba3f...
+[REPLAY] Finished. Final State Hash: f4eadd10ba3f
+SUCCESS: State hashes match exactly! Deterministic replay confirmed.
+Original:  f4eadd10ba3f94d41134daf4a53e5fe2be8c8d351a2357c3da786da1fa09a9e1
+Replayed:  f4eadd10ba3f94d41134daf4a53e5fe2be8c8d351a2357c3da786da1fa09a9e1
+PASSED
+cc/tests/test_mvp.py::test_capsule_export 
+[INGEST] Input: 'Core knowledge...' | Hash: 7d5e16f2bf0a...
+[LOG] Appended rcpt_ed75b7a4 | Log Head: 4ed50ae4c7a2...
+[COMMIT] snap_3b78f193 | State Hash: 8359405a726c...
+PASSED
+cc/tests/test_mvp.py::test_sign_and_verify PASSED
+cc/tests/test_mvp.py::test_tampered_sig_rejected PASSED
+cc/tests/test_mvp.py::test_capsule_export_import_roundtrip 
+[INGEST] Input: 'Test Unit A...' | Hash: 3a4f3bc44f32...
+[LOG] Appended rcpt_bb9a693b | Log Head: 948a06537578...
+[COMMIT] snap_7bb6e646 | State Hash: 9b5ff48282f9...
+PASSED
+cc/tests/test_mvp.py::test_capsule_import_rejects_bad_sig 
+[INGEST] Input: 'Secure Unit...' | Hash: b21b31cb5745...
+[LOG] Appended rcpt_20faae53 | Log Head: 916382ff62c3...
+[COMMIT] snap_1dd31e54 | State Hash: 25a36052e426...
+PASSED
+cc/tests/test_mvp.py::test_conflict_keep_local PASSED
+cc/tests/test_mvp.py::test_corrupted_replay 
+[INGEST] Input: 'Memory unit A...' | Hash: 124e952ba58c...
+[LOG] Appended rcpt_7270daff | Log Head: ce23a658bb5d...
+[COMMIT] snap_bbe93577 | State Hash: d2c3fc0a4c99...
+
+[INGEST] Input: 'Memory unit B...' | Hash: d0626a5bdddb...
+[LOG] Appended rcpt_4a98af8d | Log Head: 5646ecfddb68...
+[COMMIT] snap_1b3721f6 | State Hash: ccdd947d4d3e...
+[REPLAY] Replaying test_receipts.jsonl...
+[REPLAY] Applied snap_bbe93577 | State Hash: d2c3fc0a4c99...
+PASSED
+
+============================== 11 passed in 0.49s ==============================
+(base) burdens@pop-os:~/compatible$ python3 -m pytest cc/tests/test_mvp.py -v -s 2>&1 | tee docs/test_output.txt
+============================= test session starts ==============================
+platform linux -- Python 3.13.11, pytest-9.0.2, pluggy-1.5.0 -- /home/burdens/miniconda3/bin/python3
+cachedir: .pytest_cache
+rootdir: /home/burdens/compatible
+plugins: cov-7.0.0, asyncio-1.3.0, anyio-4.12.1
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 11 items
+
+cc/tests/test_mvp.py::test_zw_block_canonicalization PASSED
+cc/tests/test_mvp.py::test_full_cycle_success 
+[INGEST] Input: 'User preference: dark mode...' | Hash: 4ed32e85a869...
+[LOG] Appended rcpt_12ee7077 | Log Head: bcc78732ac34...
+[COMMIT] snap_945635a4 | State Hash: f2dc845c8947...
+PASSED
+cc/tests/test_mvp.py::test_verify_failure 
+[INGEST] Input: 'This has forbidden word...' | Hash: 3e88cd690bd1...
+[VERIFY] Rule rule1 failed (BLOCK)
+[LOG] Appended rcpt_4a5f0094 | Log Head: 7a11f69d6766...
+[DISCARD] Verification failed for rcpt_4a5f0094
+PASSED
+cc/tests/test_mvp.py::test_deterministic_replay 
+[INGEST] Input: 'Memory unit A...' | Hash: 124e952ba58c...
+[LOG] Appended rcpt_0ce1ee94 | Log Head: 89101760672c...
+[COMMIT] snap_2b816d1f | State Hash: d2c3fc0a4c99...
+
+[INGEST] Input: 'Memory unit B...' | Hash: d0626a5bdddb...
+[LOG] Appended rcpt_3dce5b44 | Log Head: 186b20024919...
+[COMMIT] snap_8f81c423 | State Hash: 9510f488d2f0...
+[REPLAY] Replaying test_receipts.jsonl...
+[REPLAY] Applied snap_2b816d1f | State Hash: d2c3fc0a4c99...
+[REPLAY] Applied snap_8f81c423 | State Hash: 9510f488d2f0...
+[REPLAY] Finished. Final State Hash: 9510f488d2f0
+SUCCESS: State hashes match exactly! Deterministic replay confirmed.
+Original:  9510f488d2f046cdf8b65eb13ace972ec353ef879281dfdc448ff459e7ff75cb
+Replayed:  9510f488d2f046cdf8b65eb13ace972ec353ef879281dfdc448ff459e7ff75cb
+PASSED
+cc/tests/test_mvp.py::test_capsule_export 
+[INGEST] Input: 'Core knowledge...' | Hash: 7d5e16f2bf0a...
+[LOG] Appended rcpt_4634b2e0 | Log Head: 7a9cc974d40b...
+[COMMIT] snap_a122918e | State Hash: 8359405a726c...
+PASSED
+cc/tests/test_mvp.py::test_sign_and_verify PASSED
+cc/tests/test_mvp.py::test_tampered_sig_rejected PASSED
+cc/tests/test_mvp.py::test_capsule_export_import_roundtrip 
+[INGEST] Input: 'Test Unit A...' | Hash: 3a4f3bc44f32...
+[LOG] Appended rcpt_f0856033 | Log Head: 268c931a902b...
+[COMMIT] snap_4037e78e | State Hash: 9b5ff48282f9...
+PASSED
+cc/tests/test_mvp.py::test_capsule_import_rejects_bad_sig 
+[INGEST] Input: 'Secure Unit...' | Hash: b21b31cb5745...
+[LOG] Appended rcpt_7f2748c0 | Log Head: 9765959813c4...
+[COMMIT] snap_47489f09 | State Hash: 25a36052e426...
+PASSED
+cc/tests/test_mvp.py::test_conflict_keep_local PASSED
+cc/tests/test_mvp.py::test_corrupted_replay 
+[INGEST] Input: 'Memory unit A...' | Hash: 124e952ba58c...
+[LOG] Appended rcpt_adac2e4e | Log Head: f9ec5ff41a0f...
+[COMMIT] snap_9f338ea2 | State Hash: d2c3fc0a4c99...
+
+[INGEST] Input: 'Memory unit B...' | Hash: d0626a5bdddb...
+[LOG] Appended rcpt_13ddf291 | Log Head: 8dc683bd7661...
+[COMMIT] snap_e88b424f | State Hash: a0c2c7a53d16...
+[REPLAY] Replaying test_receipts.jsonl...
+[REPLAY] Applied snap_9f338ea2 | State Hash: d2c3fc0a4c99...
+PASSED
+
+============================== 11 passed in 0.48s ==============================
+(base) burdens@pop-os:~/compatible$ python3 -m pytest cc/tests/test_mvp.py -v -s 2>&1 | tee docs/test_output.txt
+============================= test session starts ==============================
+platform linux -- Python 3.13.11, pytest-9.0.2, pluggy-1.5.0 -- /home/burdens/miniconda3/bin/python3
+cachedir: .pytest_cache
+rootdir: /home/burdens/compatible
+plugins: cov-7.0.0, asyncio-1.3.0, anyio-4.12.1
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 15 items
+
+cc/tests/test_mvp.py::test_zw_block_canonicalization PASSED
+cc/tests/test_mvp.py::test_full_cycle_success [LOG] Appended rcpt_fb67ce7f | Log Head: 38ac134daa3d...
+PASSED
+cc/tests/test_mvp.py::test_verify_failure [LOG] Appended rcpt_2ed67052 | Log Head: 893de1af20d7...
+PASSED
+cc/tests/test_mvp.py::test_deterministic_replay [LOG] Appended rcpt_ecc2ba5e | Log Head: be51bdc277a4...
+[LOG] Appended rcpt_bacd2b6c | Log Head: 5caf078b165f...
+[REPLAY] Replaying test_receipts.jsonl...
+[REPLAY] Applied snap_398e0b86 | State Hash: d2c3fc0a4c99...
+[REPLAY] Applied snap_9f1373d7 | State Hash: 8ad44e80d61a...
+[REPLAY] Finished. Final State Hash: 8ad44e80d61a
+SUCCESS: State hashes match exactly! Deterministic replay confirmed.
+Original:  8ad44e80d61a12cf60153e01b8f6335779768e99dea4f44938dc0d57576d9b63
+Replayed:  8ad44e80d61a12cf60153e01b8f6335779768e99dea4f44938dc0d57576d9b63
+PASSED
+cc/tests/test_mvp.py::test_capsule_export [LOG] Appended rcpt_616a25f5 | Log Head: 25b8e98329de...
+PASSED
+cc/tests/test_mvp.py::test_sign_and_verify PASSED
+cc/tests/test_mvp.py::test_tampered_sig_rejected PASSED
+cc/tests/test_mvp.py::test_capsule_export_import_roundtrip [LOG] Appended rcpt_c71d4907 | Log Head: b2bd8e87e5ec...
+PASSED
+cc/tests/test_mvp.py::test_capsule_import_rejects_bad_sig [LOG] Appended rcpt_6daa32bd | Log Head: a75d24898ee4...
+PASSED
+cc/tests/test_mvp.py::test_conflict_keep_local PASSED
+cc/tests/test_mvp.py::test_12_ttl_unit_invisible_after_expiry PASSED
+cc/tests/test_mvp.py::test_13_ttl_survives_capsule_boundary PASSED
+cc/tests/test_mvp.py::test_14_canon_scope_immutable [LOG] Appended rcpt_770b58db | Log Head: 4df2f9e1dcc0...
+[LOG] Appended rcpt_72dbd010 | Log Head: 2cf4db087de0...
+PASSED
+cc/tests/test_mvp.py::test_15_policy_rule_violation_blocks_commit [LOG] Appended rcpt_6019789a | Log Head: d5c88671b970...
+[LOG] Appended rcpt_5c655841 | Log Head: 6de347cec28a...
+PASSED
+cc/tests/test_mvp.py::test_corrupted_replay [LOG] Appended rcpt_1af7d8de | Log Head: 73b47a0a0b43...
+[LOG] Appended rcpt_4da86276 | Log Head: 006903d27a2a...
+[REPLAY] Replaying test_receipts.jsonl...
+[REPLAY] Applied snap_3d016ddd | State Hash: d2c3fc0a4c99...
+PASSED
+
+=============================== warnings summary ===============================
+cc/tests/test_mvp.py::test_verify_failure
+cc/tests/test_mvp.py::test_15_policy_rule_violation_blocks_commit
+  /home/burdens/compatible/cc/memory.py:200: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    """, (rule_id, description, predicate, 1, datetime.utcnow().isoformat()))
+
+cc/tests/test_mvp.py::test_12_ttl_unit_invisible_after_expiry
+  /home/burdens/compatible/cc/tests/test_mvp.py:279: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    past = (datetime.utcnow() - timedelta(hours=1)).isoformat()
+
+cc/tests/test_mvp.py::test_12_ttl_unit_invisible_after_expiry
+  /home/burdens/compatible/cc/tests/test_mvp.py:289: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    future = (datetime.utcnow() + timedelta(hours=1)).isoformat()
+
+cc/tests/test_mvp.py::test_12_ttl_unit_invisible_after_expiry
+cc/tests/test_mvp.py::test_13_ttl_survives_capsule_boundary
+cc/tests/test_mvp.py::test_14_canon_scope_immutable
+cc/tests/test_mvp.py::test_15_policy_rule_violation_blocks_commit
+  /home/burdens/compatible/cc/memory.py:165: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    now_iso = datetime.utcnow().isoformat()
+
+cc/tests/test_mvp.py::test_13_ttl_survives_capsule_boundary
+  /home/burdens/compatible/cc/tests/test_mvp.py:322: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    future = (datetime.utcnow() + timedelta(hours=2)).isoformat()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================== 15 passed, 9 warnings in 0.69s ========================
+(base) burdens@pop-os:~/compatible$ python3 -m pytest cc/tests/test_mvp.py -v -s 2>&1 | tee docs/test_output.txt
+============================= test session starts ==============================
+platform linux -- Python 3.13.11, pytest-9.0.2, pluggy-1.5.0 -- /home/burdens/miniconda3/bin/python3
+cachedir: .pytest_cache
+rootdir: /home/burdens/compatible
+plugins: cov-7.0.0, asyncio-1.3.0, anyio-4.12.1
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 15 items
+
+cc/tests/test_mvp.py::test_zw_block_canonicalization PASSED
+cc/tests/test_mvp.py::test_full_cycle_success [LOG] Appended rcpt_ef637887 | Log Head: 874a5f4488cf...
+PASSED
+cc/tests/test_mvp.py::test_verify_failure [LOG] Appended rcpt_b0be99c0 | Log Head: 5f64cf6af46a...
+PASSED
+cc/tests/test_mvp.py::test_deterministic_replay [LOG] Appended rcpt_84813183 | Log Head: 30739991e83a...
+[LOG] Appended rcpt_0338c73c | Log Head: bc5001647c9b...
+[REPLAY] Replaying test_receipts.jsonl...
+[REPLAY] Applied snap_291de0bf | State Hash: d2c3fc0a4c99...
+[REPLAY] Applied snap_a04363c1 | State Hash: c4f871eb2bfb...
+[REPLAY] Finished. Final State Hash: c4f871eb2bfb
+SUCCESS: State hashes match exactly! Deterministic replay confirmed.
+Original:  c4f871eb2bfba30f742e2297c9f446ab2a844aee5fe2cb949adfc6af43258533
+Replayed:  c4f871eb2bfba30f742e2297c9f446ab2a844aee5fe2cb949adfc6af43258533
+PASSED
+cc/tests/test_mvp.py::test_capsule_export [LOG] Appended rcpt_d11f9ff3 | Log Head: 45a81834261b...
+PASSED
+cc/tests/test_mvp.py::test_sign_and_verify PASSED
+cc/tests/test_mvp.py::test_tampered_sig_rejected PASSED
+cc/tests/test_mvp.py::test_capsule_export_import_roundtrip [LOG] Appended rcpt_6294f929 | Log Head: 955490eba5d9...
+PASSED
+cc/tests/test_mvp.py::test_capsule_import_rejects_bad_sig [LOG] Appended rcpt_01216491 | Log Head: ed875c14c2e8...
+PASSED
+cc/tests/test_mvp.py::test_conflict_keep_local PASSED
+cc/tests/test_mvp.py::test_12_ttl_unit_invisible_after_expiry PASSED
+cc/tests/test_mvp.py::test_13_ttl_survives_capsule_boundary PASSED
+cc/tests/test_mvp.py::test_14_canon_scope_immutable [LOG] Appended rcpt_6eeee508 | Log Head: a15cbfbe30ca...
+[LOG] Appended rcpt_3c8ecfe7 | Log Head: f83c88baab54...
+PASSED
+cc/tests/test_mvp.py::test_15_policy_rule_violation_blocks_commit [LOG] Appended rcpt_9db51f7c | Log Head: eb72f50cf8e8...
+[LOG] Appended rcpt_02dcd206 | Log Head: 75a10ebdc09f...
+PASSED
+cc/tests/test_mvp.py::test_corrupted_replay [LOG] Appended rcpt_5124133d | Log Head: 2171b419aa54...
+[LOG] Appended rcpt_7be95a7e | Log Head: a6ff6e46619e...
+[REPLAY] Replaying test_receipts.jsonl...
+[REPLAY] Applied snap_6dda3828 | State Hash: d2c3fc0a4c99...
+PASSED
+
+============================== 15 passed in 0.69s ==============================
+(base) burdens@pop-os:~/compatible$ python3 -m pytest cc/tests/test_mvp.py -v -s 2>&1 | tee docs/test_output.txt
+============================= test session starts ==============================
+platform linux -- Python 3.13.11, pytest-9.0.2, pluggy-1.5.0 -- /home/burdens/miniconda3/bin/python3
+cachedir: .pytest_cache
+rootdir: /home/burdens/compatible
+plugins: cov-7.0.0, asyncio-1.3.0, anyio-4.12.1
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 17 items
+
+cc/tests/test_mvp.py::test_zw_block_canonicalization PASSED
+cc/tests/test_mvp.py::test_full_cycle_success [LOG] Appended rcpt_c759f255 | Log Head: 090d670e7eed...
+PASSED
+cc/tests/test_mvp.py::test_verify_failure [LOG] Appended rcpt_ba59e834 | Log Head: 16a4c653e452...
+PASSED
+cc/tests/test_mvp.py::test_deterministic_replay [LOG] Appended rcpt_2471fa1e | Log Head: 487d0d0164fd...
+[LOG] Appended rcpt_4822d9ca | Log Head: 7c439df30348...
+[REPLAY] Replaying test_receipts.jsonl...
+[REPLAY] Applied snap_aaa1f047 | State Hash: d2c3fc0a4c99...
+[REPLAY] Applied snap_3cfb04f8 | State Hash: cba01e041e53...
+[REPLAY] Finished. Final State Hash: cba01e041e53
+SUCCESS: State hashes match exactly! Deterministic replay confirmed.
+Original:  cba01e041e53b1e6e659e52b2766e96ebfe2cff1571405566c28353ca3f0df2b
+Replayed:  cba01e041e53b1e6e659e52b2766e96ebfe2cff1571405566c28353ca3f0df2b
+PASSED
+cc/tests/test_mvp.py::test_capsule_export [LOG] Appended rcpt_ba41d86a | Log Head: d7fc6fe4bbe2...
+PASSED
+cc/tests/test_mvp.py::test_sign_and_verify PASSED
+cc/tests/test_mvp.py::test_tampered_sig_rejected PASSED
+cc/tests/test_mvp.py::test_capsule_export_import_roundtrip [LOG] Appended rcpt_a30acf9b | Log Head: df8d1c6dc949...
+PASSED
+cc/tests/test_mvp.py::test_capsule_import_rejects_bad_sig [LOG] Appended rcpt_4cd2b506 | Log Head: 8b6f34f0b5de...
+PASSED
+cc/tests/test_mvp.py::test_conflict_keep_local PASSED
+cc/tests/test_mvp.py::test_12_ttl_unit_invisible_after_expiry PASSED
+cc/tests/test_mvp.py::test_13_ttl_survives_capsule_boundary PASSED
+cc/tests/test_mvp.py::test_14_canon_scope_immutable [LOG] Appended rcpt_2943d08c | Log Head: 06727949f1bf...
+[LOG] Appended rcpt_2d75559e | Log Head: f58fc43caa1b...
+PASSED
+cc/tests/test_mvp.py::test_15_policy_rule_violation_blocks_commit [LOG] Appended rcpt_68ca9374 | Log Head: d3dc397526a9...
+[LOG] Appended rcpt_2ca14b3e | Log Head: 8699c9bc5991...
+PASSED
+cc/tests/test_mvp.py::test_corrupted_replay [LOG] Appended rcpt_a951a460 | Log Head: f54c19672ab3...
+[LOG] Appended rcpt_d1c76391 | Log Head: 1d4ca3ba9838...
+[REPLAY] Replaying test_receipts.jsonl...
+[REPLAY] Applied snap_550d75af | State Hash: d2c3fc0a4c99...
+PASSED
+cc/tests/test_mvp.py::test_16_zw_block_deterministic_hash PASSED
+cc/tests/test_mvp.py::test_17_style_profile_write_is_auditable [LOG] Appended rcpt_732d6c9c | Log Head: 8798b43e285c...
+[LOG] Appended rcpt_debe7e5b | Log Head: 35845d69dd7c...
+PASSED
+
+============================== 17 passed in 0.71s ==============================
+(base) burdens@pop-os:~/compatible$ python3 -m pytest cc/tests/test_mvp.py -v -s 2>&1 | tee docs/test_output.txt
+============================= test session starts ==============================
+platform linux -- Python 3.13.11, pytest-9.0.2, pluggy-1.5.0 -- /home/burdens/miniconda3/bin/python3
+cachedir: .pytest_cache
+rootdir: /home/burdens/compatible
+plugins: cov-7.0.0, asyncio-1.3.0, anyio-4.12.1
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 25 items
+
+cc/tests/test_mvp.py::test_zw_block_canonicalization PASSED
+cc/tests/test_mvp.py::test_full_cycle_success [LOG] Appended rcpt_6b6c3666 | Log Head: 78a27787b2ee...
+PASSED
+cc/tests/test_mvp.py::test_verify_failure [LOG] Appended rcpt_c6dd9d28 | Log Head: ea27ffcc43d8...
+PASSED
+cc/tests/test_mvp.py::test_deterministic_replay [LOG] Appended rcpt_17e6b264 | Log Head: b4a7727460d0...
+[LOG] Appended rcpt_3d793de8 | Log Head: 48285dc49de5...
+[REPLAY] Replaying test_receipts.jsonl...
+[REPLAY] Applied snap_427e6d79 | State Hash: d2c3fc0a4c99...
+[REPLAY] Applied snap_caa9106b | State Hash: d410e2e5fe67...
+[REPLAY] Finished. Final State Hash: d410e2e5fe67
+SUCCESS: State hashes match exactly! Deterministic replay confirmed.
+Original:  d410e2e5fe67b5aa299960dc3c166b7a4b2fe1d1f9d39d551b79041fd027fe10
+Replayed:  d410e2e5fe67b5aa299960dc3c166b7a4b2fe1d1f9d39d551b79041fd027fe10
+PASSED
+cc/tests/test_mvp.py::test_capsule_export [LOG] Appended rcpt_f6519662 | Log Head: 59ea05ac59a9...
+PASSED
+cc/tests/test_mvp.py::test_sign_and_verify PASSED
+cc/tests/test_mvp.py::test_tampered_sig_rejected PASSED
+cc/tests/test_mvp.py::test_capsule_export_import_roundtrip [LOG] Appended rcpt_d3eb33db | Log Head: 2bda75ffd747...
+PASSED
+cc/tests/test_mvp.py::test_capsule_import_rejects_bad_sig [LOG] Appended rcpt_b5a31c28 | Log Head: cbf0b92585d5...
+PASSED
+cc/tests/test_mvp.py::test_conflict_keep_local PASSED
+cc/tests/test_mvp.py::test_12_ttl_unit_invisible_after_expiry PASSED
+cc/tests/test_mvp.py::test_13_ttl_survives_capsule_boundary PASSED
+cc/tests/test_mvp.py::test_14_canon_scope_immutable [LOG] Appended rcpt_e4e89b46 | Log Head: 949747482cf9...
+[LOG] Appended rcpt_df25d10a | Log Head: 10f24ce1d7c7...
+PASSED
+cc/tests/test_mvp.py::test_15_policy_rule_violation_blocks_commit [LOG] Appended rcpt_8bb759fe | Log Head: 310fe9bb0791...
+[LOG] Appended rcpt_a21486e0 | Log Head: 212958eda45b...
+PASSED
+cc/tests/test_mvp.py::test_corrupted_replay [LOG] Appended rcpt_ef56ce8f | Log Head: c451aa8f9ca5...
+[LOG] Appended rcpt_6f80081f | Log Head: 386f251323f1...
+[REPLAY] Replaying test_receipts.jsonl...
+[REPLAY] Applied snap_ccb96dda | State Hash: d2c3fc0a4c99...
+PASSED
+cc/tests/test_mvp.py::test_16_zw_block_deterministic_hash PASSED
+cc/tests/test_mvp.py::test_17_style_profile_write_is_auditable [LOG] Appended rcpt_f2f647f4 | Log Head: 3b9b48ee128f...
+[LOG] Appended rcpt_1dc0365f | Log Head: 8c18b8cc0731...
+PASSED
+cc/tests/test_mvp.py::test_18_allowed_tool_call_commits [LOG] Appended rcpt_b28f21ae | Log Head: 09b87dc0dd07...
+PASSED
+cc/tests/test_mvp.py::test_19_gateway_blocks_disallowed_host [LOG] Appended rcpt_945ff61b | Log Head: dab85c6d6e4a...
+PASSED
+cc/tests/test_mvp.py::test_20_verifier_catches_unauthorized_call [LOG] Appended rcpt_0f1ecfcc | Log Head: c8a81b7e873a...
+PASSED
+cc/tests/test_mvp.py::test_21_staged_writes_discarded_on_tool_violation [LOG] Appended rcpt_c329aacb | Log Head: 8ecc0a83d853...
+PASSED
+cc/tests/test_mvp.py::test_22_ast_whitelist_blocks_injection PASSED
+cc/tests/test_mvp.py::test_23_key_manager_session_resident PASSED
+cc/tests/test_mvp.py::test_24_mcp_mem_find_returns_results PASSED
+cc/tests/test_mvp.py::test_25_mcp_mem_store_full_cycle [LOG] Appended rcpt_d6bae3ff | Log Head: 8946685d4639...
+PASSED
+
+=============================== warnings summary ===============================
+cc/tests/test_mvp.py::test_full_cycle_success
+cc/tests/test_mvp.py::test_verify_failure
+cc/tests/test_mvp.py::test_deterministic_replay
+cc/tests/test_mvp.py::test_capsule_export
+cc/tests/test_mvp.py::test_capsule_export_import_roundtrip
+cc/tests/test_mvp.py::test_capsule_import_rejects_bad_sig
+cc/tests/test_mvp.py::test_corrupted_replay
+  /home/burdens/compatible/cc/runtime.py:41: RuntimeWarning: Relative db_path 'test_memory.db' detected. Recommended: '/home/burdens/.compatible/companion.db'
+    warnings.warn(f"Relative db_path '{db_path}' detected. Recommended: '{default_db}'", RuntimeWarning)
+
+cc/tests/test_mvp.py::test_full_cycle_success
+cc/tests/test_mvp.py::test_verify_failure
+cc/tests/test_mvp.py::test_deterministic_replay
+cc/tests/test_mvp.py::test_capsule_export
+cc/tests/test_mvp.py::test_capsule_export_import_roundtrip
+cc/tests/test_mvp.py::test_capsule_import_rejects_bad_sig
+cc/tests/test_mvp.py::test_corrupted_replay
+  /home/burdens/compatible/cc/runtime.py:43: RuntimeWarning: Relative log_path 'test_receipts.jsonl' detected. Recommended: '/home/burdens/.compatible/receipts.jsonl'
+    warnings.warn(f"Relative log_path '{log_path}' detected. Recommended: '{default_log}'", RuntimeWarning)
+
+cc/tests/test_mvp.py::test_deterministic_replay
+  /home/burdens/compatible/cc/runtime.py:41: RuntimeWarning: Relative db_path 'replay_memory.db' detected. Recommended: '/home/burdens/.compatible/companion.db'
+    warnings.warn(f"Relative db_path '{db_path}' detected. Recommended: '{default_db}'", RuntimeWarning)
+
+cc/tests/test_mvp.py::test_capsule_export_import_roundtrip
+cc/tests/test_mvp.py::test_capsule_import_rejects_bad_sig
+  /home/burdens/compatible/cc/runtime.py:41: RuntimeWarning: Relative db_path 'test_memory2.db' detected. Recommended: '/home/burdens/.compatible/companion.db'
+    warnings.warn(f"Relative db_path '{db_path}' detected. Recommended: '{default_db}'", RuntimeWarning)
+
+cc/tests/test_mvp.py::test_capsule_export_import_roundtrip
+cc/tests/test_mvp.py::test_capsule_import_rejects_bad_sig
+  /home/burdens/compatible/cc/runtime.py:43: RuntimeWarning: Relative log_path 'test_receipts2.jsonl' detected. Recommended: '/home/burdens/.compatible/receipts.jsonl'
+    warnings.warn(f"Relative log_path '{log_path}' detected. Recommended: '{default_log}'", RuntimeWarning)
+
+cc/tests/test_mvp.py::test_conflict_keep_local
+  /home/burdens/compatible/cc/runtime.py:41: RuntimeWarning: Relative db_path 'local.db' detected. Recommended: '/home/burdens/.compatible/companion.db'
+    warnings.warn(f"Relative db_path '{db_path}' detected. Recommended: '{default_db}'", RuntimeWarning)
+
+cc/tests/test_mvp.py::test_conflict_keep_local
+  /home/burdens/compatible/cc/runtime.py:43: RuntimeWarning: Relative log_path 'local.jsonl' detected. Recommended: '/home/burdens/.compatible/receipts.jsonl'
+    warnings.warn(f"Relative log_path '{log_path}' detected. Recommended: '{default_log}'", RuntimeWarning)
+
+cc/tests/test_mvp.py::test_conflict_keep_local
+  /home/burdens/compatible/cc/runtime.py:41: RuntimeWarning: Relative db_path 'remote.db' detected. Recommended: '/home/burdens/.compatible/companion.db'
+    warnings.warn(f"Relative db_path '{db_path}' detected. Recommended: '{default_db}'", RuntimeWarning)
+
+cc/tests/test_mvp.py::test_conflict_keep_local
+  /home/burdens/compatible/cc/runtime.py:43: RuntimeWarning: Relative log_path 'remote.jsonl' detected. Recommended: '/home/burdens/.compatible/receipts.jsonl'
+    warnings.warn(f"Relative log_path '{log_path}' detected. Recommended: '{default_log}'", RuntimeWarning)
+
+cc/tests/test_mvp.py::test_corrupted_replay
+  /home/burdens/compatible/cc/runtime.py:41: RuntimeWarning: Relative db_path 'corrupt_replay.db' detected. Recommended: '/home/burdens/.compatible/companion.db'
+    warnings.warn(f"Relative db_path '{db_path}' detected. Recommended: '{default_db}'", RuntimeWarning)
+
+cc/tests/test_mvp.py::test_corrupted_replay
+  /home/burdens/compatible/cc/runtime.py:43: RuntimeWarning: Relative log_path 'corrupt_replay.jsonl' detected. Recommended: '/home/burdens/.compatible/receipts.jsonl'
+    warnings.warn(f"Relative log_path '{log_path}' detected. Recommended: '{default_log}'", RuntimeWarning)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================= 25 passed, 25 warnings in 1.34s ========================
+(base) burdens@pop-os:~/compatible$ cd ~/compatible
+python3 cc/tests/stress_harness.py
+python3: can't open file '/home/burdens/compatible/cc/tests/stress_harness.py': [Errno 2] No such file or directory
+(base) burdens@pop-os:~/compatible$ ls
+cc              demo_receipts.jsonl  main.py            test_receipts.jsonl
+demo_memory.db  docs                 stress_harness.py
+(base) burdens@pop-os:~/compatible$ python3 stress_harness.py
+/home/burdens/compatible/stress_harness.py:244: SyntaxWarning: invalid escape sequence '\s'
+  r'(\"prev_receipt_hash\":\s*\"sha256:[a-f0-9]{4})',
+
+────────────────────────────────────────────────────────────
+1 · ZW Block Canonicalization
+  ✗ FAIL  ZW block produces deterministic hash  →  Traceback (most recent call last):
+  File "/tmp/tmpb3twe81d.py", line 9, in <module>
+    assert b1.canonical_hash == b2.canonical_hash, "same input must give same hash"
+           ^^^^^^^^^^^^^^^^^
+AttributeError: 'ZWBlock' object has no attribute 'canonical_hash'. Did you mean: 'canonical_bytes'?
+
+  ✗ FAIL  ZW block: trailing space produces different hash (no silent stripping)  →  Traceback (most recent call last):
+  File "/tmp/tmp0pwsqexv.py", line 6, in <module>
+    if b1.canonical_hash == b2.canonical_hash:
+       ^^^^^^^^^^^^^^^^^
+AttributeError: 'ZWBlock' object has no attribute 'canonical_hash'. Did you mean: 'canonical_bytes'?
+
+
+────────────────────────────────────────────────────────────
+2 · State Machine — Full Cycle Success
+  ✓ PASS  Full cycle COMMIT promotes unit to storage
+
+────────────────────────────────────────────────────────────
+3 · Verify Failure — Staged Writes Discarded
+  ✗ FAIL  VERIFY failure: staged writes discarded, nothing committed  →  [LOG] Appended rcpt_9e163c70 | Log Head: 0285368cf4f6...
+Traceback (most recent call last):
+  File "/tmp/tmpq5t5i3h3.py", line 20, in <module>
+    assert result == "FAIL", f"expected FAIL got {result}"
+           ^^^^^^^^^^^^^^^^
+AssertionError: expected FAIL got COMMIT
+
+
+────────────────────────────────────────────────────────────
+4 · Deterministic Replay
+  ✓ PASS  Deterministic replay: two runtimes arrive at same state_hash
+  → Injecting: single-byte corruption in receipt log
+  ✓ CORRUPT_CAUGHT  Receipt log corruption detected on replay
+
+────────────────────────────────────────────────────────────
+5 · Ed25519 Signing
+  ✗ FAIL  Ed25519: sign is deterministic and verifies  →  Traceback (most recent call last):
+  File "/tmp/tmp6ed1u7im.py", line 10, in <module>
+    generate_keypair(key_path)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^
+TypeError: generate_keypair() takes 0 positional arguments but 1 was given
+
+  → Injecting: payload tampered after signing
+  ✗ CORRUPT_MISSED  Ed25519: tampered payload rejected by verify  →  Traceback (most recent call last):
+  File "/tmp/tmp5skrdzjo.py", line 3, in <module>
+    from cc.identity import KeyManager, generate_keypair, verify_signature, load_public_key
+ImportError: cannot import name 'verify_signature' from 'cc.identity' (/home/burdens/compatible/cc/identity.py)
+
+
+────────────────────────────────────────────────────────────
+6 · KeyManager: Session-Resident + Zero on Close
+  ✗ FAIL  KeyManager: key zeroed after close(), subsequent sign() raises  →  Traceback (most recent call last):
+  File "/tmp/tmp2cahbwm8.py", line 7, in <module>
+    generate_keypair(key_path)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^
+TypeError: generate_keypair() takes 0 positional arguments but 1 was given
+
+
+────────────────────────────────────────────────────────────
+7 · TTL: Expired Unit Invisible
+  ✗ FAIL  TTL: expired unit invisible to mem_find  →  [LOG] Appended rcpt_a11b02f8 | Log Head: beee5e05857b...
+Traceback (most recent call last):
+  File "/tmp/tmpf3krr6uo.py", line 19, in <module>
+    assert not any(u["unit_id"] == "u_ttl" for u in units), "expired unit must not be returned"
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: expired unit must not be returned
+
+  → Verifying: expired unit is tombstoned in DB, not hard-deleted (provenance preserved)
+  ✗ FAIL  TTL tombstone check: unexpected output: [LOG] Appended rcpt_8eef6212 | Log Head: c96b04cf4964...
+Traceback (most recent call last):
+  File "/tmp/tmprhiyfnn1.py", line 17, in <module>
+    rows = conn.execute("SELECT id FROM units WHERE id = 'u_ttl'").fetchall()
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+sqlite3.OperationalError: no such column: id
+
+
+────────────────────────────────────────────────────────────
+8 · Canon Immutability
+  ✓ PASS  Canon immutability: second write blocked, original preserved
+
+────────────────────────────────────────────────────────────
+9 · AST Whitelist Blocks Injection
+  ✓ CORRUPT_CAUGHT  AST whitelist: __class__.__mro__ injection blocked
+  → Injecting: import os via policy predicate
+  ✓ CORRUPT_CAUGHT  AST whitelist: __import__ call blocked
+  → Injecting: list comprehension in policy predicate
+  ✓ CORRUPT_CAUGHT  AST whitelist: list comprehension blocked
+
+────────────────────────────────────────────────────────────
+10 · Tool Gateway: Allowlist Enforcement
+  ✓ CORRUPT_CAUGHT  Tool gateway: disallowed host blocked before network I/O
+
+────────────────────────────────────────────────────────────
+11 · Verifier: Catches Unauthorized Tool Call Even If Gateway Bypassed
+  ✓ PASS  Verifier: catches unauthorized call even if gateway is bypassed
+
+────────────────────────────────────────────────────────────
+12 · Capsule Export/Import Roundtrip
+  ✗ FAIL  Capsule export/import roundtrip: unit survives portability  →  Traceback (most recent call last):
+  File "/tmp/tmpofa8welt.py", line 9, in <module>
+    generate_keypair(key)
+    ~~~~~~~~~~~~~~~~^^^^^
+TypeError: generate_keypair() takes 0 positional arguments but 1 was given
+
+  → Injecting: tampered capsule signature
+  ✗ CORRUPT_MISSED  Capsule import: tampered signature rejected  →  Traceback (most recent call last):
+  File "/tmp/tmpeqdfqg7z.py", line 9, in <module>
+    generate_keypair(key)
+    ~~~~~~~~~~~~~~~~^^^^^
+TypeError: generate_keypair() takes 0 positional arguments but 1 was given
+
+
+────────────────────────────────────────────────────────────
+13 · Conflict Resolution: keep_local
+  ✗ FAIL  Conflict resolution: keep_local preserves local unit  →  Traceback (most recent call last):
+  File "/tmp/tmp4ls94_rr.py", line 9, in <module>
+    generate_keypair(key)
+    ~~~~~~~~~~~~~~~~^^^^^
+TypeError: generate_keypair() takes 0 positional arguments but 1 was given
+
+
+────────────────────────────────────────────────────────────
+14 · MCP Adapter: mem_find and mem_store
+  ✗ FAIL  MCP adapter: mem_find returns results, mem_store goes through full cycle  →  Traceback (most recent call last):
+  File "/tmp/tmpwng0bme4.py", line 41, in <module>
+    asyncio.run(run())
+    ~~~~~~~~~~~^^^^^^^
+  File "/home/burdens/miniconda3/lib/python3.13/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "/home/burdens/miniconda3/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/home/burdens/miniconda3/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/tmp/tmpwng0bme4.py", line 10, in run
+    generate_keypair(key)
+    ~~~~~~~~~~~~~~~~^^^^^
+TypeError: generate_keypair() takes 0 positional arguments but 1 was given
+
+
+────────────────────────────────────────────────────────────
+15 · Profile Write Auditable via Provenance
+  ✓ PASS  Profile write recorded in provenance (persona drift is auditable)
+
+────────────────────────────────────────────────────────────
+FINAL REPORT
+
+  Total checks : 22
+  Passed        : 10
+  Failed        : 12
+
+  Failed checks:
+    ✗ ZW block produces deterministic hash
+      Traceback (most recent call last):
+        File "/tmp/tmpb3twe81d.py", line 9, in <module>
+          assert b1.canonical_hash == b2.canonical_hash, "same input must give same hash"
+                 ^^^^^^^^^^^^^^^^^
+      AttributeError: 'ZWBlock' object has no attribute 'canonical_hash'. Did you mean: 'canonical_bytes'?
+    ✗ ZW block: trailing space produces different hash (no silent stripping)
+      Traceback (most recent call last):
+        File "/tmp/tmp0pwsqexv.py", line 6, in <module>
+          if b1.canonical_hash == b2.canonical_hash:
+             ^^^^^^^^^^^^^^^^^
+      AttributeError: 'ZWBlock' object has no attribute 'canonical_hash'. Did you mean: 'canonical_bytes'?
+    ✗ VERIFY failure: staged writes discarded, nothing committed
+      Traceback (most recent call last):
+        File "/tmp/tmpq5t5i3h3.py", line 20, in <module>
+          assert result == "FAIL", f"expected FAIL got {result}"
+                 ^^^^^^^^^^^^^^^^
+      AssertionError: expected FAIL got COMMIT
+    ✗ Ed25519: sign is deterministic and verifies
+      Traceback (most recent call last):
+        File "/tmp/tmp6ed1u7im.py", line 10, in <module>
+          generate_keypair(key_path)
+          ~~~~~~~~~~~~~~~~^^^^^^^^^^
+      TypeError: generate_keypair() takes 0 positional arguments but 1 was given
+    ✗ Ed25519: tampered payload rejected by verify [corruption]
+      Traceback (most recent call last):
+        File "/tmp/tmp5skrdzjo.py", line 3, in <module>
+          from cc.identity import KeyManager, generate_keypair, verify_signature, load_public_key
+      ImportError: cannot import name 'verify_signature' from 'cc.identity' (/home/burdens/compatible/cc/identity.py)
+    ✗ KeyManager: key zeroed after close(), subsequent sign() raises
+      Traceback (most recent call last):
+        File "/tmp/tmp2cahbwm8.py", line 7, in <module>
+          generate_keypair(key_path)
+          ~~~~~~~~~~~~~~~~^^^^^^^^^^
+      TypeError: generate_keypair() takes 0 positional arguments but 1 was given
+    ✗ TTL: expired unit invisible to mem_find
+      Traceback (most recent call last):
+        File "/tmp/tmpf3krr6uo.py", line 19, in <module>
+          assert not any(u["unit_id"] == "u_ttl" for u in units), "expired unit must not be returned"
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      AssertionError: expired unit must not be returned
+    ✗ TTL tombstone preservation
+      Traceback (most recent call last):
+        File "/tmp/tmprhiyfnn1.py", line 17, in <module>
+          rows = conn.execute("SELECT id FROM units WHERE id = 'u_ttl'").fetchall()
+                 ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      sqlite3.OperationalError: no such column: id
+    ✗ Capsule export/import roundtrip: unit survives portability
+      Traceback (most recent call last):
+        File "/tmp/tmpofa8welt.py", line 9, in <module>
+          generate_keypair(key)
+          ~~~~~~~~~~~~~~~~^^^^^
+      TypeError: generate_keypair() takes 0 positional arguments but 1 was given
+    ✗ Capsule import: tampered signature rejected [corruption]
+      Traceback (most recent call last):
+        File "/tmp/tmpeqdfqg7z.py", line 9, in <module>
+          generate_keypair(key)
+          ~~~~~~~~~~~~~~~~^^^^^
+      TypeError: generate_keypair() takes 0 positional arguments but 1 was given
+    ✗ Conflict resolution: keep_local preserves local unit
+      Traceback (most recent call last):
+        File "/tmp/tmp4ls94_rr.py", line 9, in <module>
+          generate_keypair(key)
+          ~~~~~~~~~~~~~~~~^^^^^
+      TypeError: generate_keypair() takes 0 positional arguments but 1 was given
+    ✗ MCP adapter: mem_find returns results, mem_store goes through full cycle
+                 ~~~~~~~~~~~~~^^
+        File "/tmp/tmpwng0bme4.py", line 10, in run
+          generate_keypair(key)
+          ~~~~~~~~~~~~~~~~^^^^^
+      TypeError: generate_keypair() takes 0 positional arguments but 1 was given
+
+(base) burdens@pop-os:~/compatible$ cd ~/compatible
+grep -n "ttl" cc/memory.py
+grep -n "invariants" cc/runtime.py
+26:                ttl_expires_at TEXT,
+63:    def mem_store(self, unit_id: str, scope: str, body: Dict[str, Any], tags: List[str] = None, ttl_expires_at: str = None) -> str:
+66:        ttl_expires_at: ISO 8601 UTC string or None.
+78:            "ttl_expires_at": ttl_expires_at
+103:                (unit_id, scope, body, body_hash, tags, entities, ttl_expires_at, created_at, snapshot_id)
+109:                json.dumps(unit.get('entities', [])), unit.get('ttl_expires_at'),
+174:                 AND (ttl_expires_at IS NULL 
+175:                      OR ttl_expires_at > ?)''', 
+212:    def mem_store_zw(self, zw_text: str, unit_id: str, ttl_expires_at: str = None) -> str:
+225:        return self.mem_store(unit_id, scope, body, ttl_expires_at=ttl_expires_at)
+116:        self.run_cycle(plan, act_fn, invariants=[])
+119:    def run_cycle(self, plan: Dict[str, Any], act_fn, invariants: List = None) -> str:
+(base) burdens@pop-os:~/compatible$ sed -n '119,160p' cc/runtime.py
+    def run_cycle(self, plan: Dict[str, Any], act_fn, invariants: List = None) -> str:
+        """
+        Orchestrates PLAN -> ACT -> VERIFY -> COMMIT/FAIL.
+        """
+        # 1. PLAN
+        self.phase = "PLAN"
+        self.current_plan = plan
+        input_hash = hashlib.sha256(json.dumps(plan, sort_keys=True).encode()).hexdigest()
+
+        # 2. ACT
+        self.phase = "ACT"
+        act_result = act_fn(plan)
+        self._last_act_result = act_result if isinstance(act_result, dict) else {}
+        
+        # In MVP, if act_result is a unit or contains unit data, we stage it
+        if isinstance(act_result, dict):
+            if act_result.get('action') == 'mem_store' or 'unit_id' in act_result:
+                # Normalizing for memory.py
+                unit = {
+                    'unit_id':   act_result.get('unit_id'),
+                    'scope':     act_result.get('scope'),
+                    'body':      act_result.get('body'),
+                    'body_hash': act_result.get('body_hash') or hashlib.sha256(json.dumps(act_result.get('body'), sort_keys=True).encode()).hexdigest(),
+                    'tags':      act_result.get('tags', []),
+                    'ttl_expires_at': act_result.get('ttl_expires_at')
+                }
+                self.memory.stage_unit(unit)
+            elif 'units' in act_result:
+                for u in act_result['units']:
+                    self.memory.stage_unit(u)
+
+        # 3. VERIFY
+        self.phase = "VERIFY"
+        
+        # 1. Canon immutability
+        error = self._verify_canon_immutability(self.memory.staged_units, self.memory.conn)
+        if error:
+            return self._emit_fail(error, input_hash)
+
+        # 2. Tool receipt integrity (NEW)
+        error = self._verify_tool_receipts(self._last_act_result, self.tool_allowlist)
+        if error:
+(base) burdens@pop-os:~/compatible$ grep -n "def generate_keypair\|def verify_sig\|def load_pub\|class KeyManager\|def sign\|def close" cc/identity.py
+grep -n "def canonical\|def hash\|class ZWBlock" cc/zw_block.py
+8:def generate_keypair() -> tuple[str, str]:
+21:def sign_payload(payload_bytes: bytes) -> str:
+35:class KeyManager:
+48:    def sign(self, payload: bytes) -> str:
+54:    def close(self):
+53:def canonical_bytes(parsed: dict) -> tuple[bytes, str]:
+91:class ZWBlock:
+(base) burdens@pop-os:~/compatible$ python3 stress_harness.py
+
+────────────────────────────────────────────────────────────
+1 · ZW Block Canonicalization
+  ✗ FAIL  ZW canonical_bytes: deterministic, unique per content
+                ~~~~~~~~~~~~~~~^^^
+      File "/home/burdens/compatible/cc/zw_block.py", line 68, in canonical_bytes
+        lines.append(f"ZW[{parsed['block_type']}]")
+                           ~~~~~~^^^^^^^^^^^^^^
+    KeyError: 'block_type'
+  ✗ FAIL  ZW canonical_bytes: trailing space = different hash (no silent stripping)
+                ~~~~~~~~~~~~~~~^^^^
+      File "/home/burdens/compatible/cc/zw_block.py", line 68, in canonical_bytes
+        lines.append(f"ZW[{parsed['block_type']}]")
+                           ~~~~~~^^^^^^^^^^^^^^
+    KeyError: 'block_type'
+
+────────────────────────────────────────────────────────────
+2 · State Machine — Full Cycle COMMIT
+  ✓ PASS  Full cycle COMMIT promotes unit to committed storage
+
+────────────────────────────────────────────────────────────
+3 · Verify Failure — Staged Writes Discarded
+  ✓ PASS  VERIFY FAIL (canon overwrite): staged writes discarded, original intact
+
+────────────────────────────────────────────────────────────
+4 · Deterministic Replay
+  ✓ PASS  Deterministic replay: fresh runtime reaches same state_hash
+  → Injecting: single-byte corruption in receipt log
+  ✓ CORRUPT_CAUGHT  Receipt log: single-byte corruption detected on replay
+
+────────────────────────────────────────────────────────────
+5 · Ed25519 Signing
+  ✓ PASS  generate_keypair(): returns (priv_str, pub_str)
+  ✗ FAIL  KeyManager.sign: deterministic within session
+        obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+                   ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+      File "/home/burdens/miniconda3/lib/python3.13/json/decoder.py", line 363, in raw_decode
+        raise JSONDecodeError("Expecting value", s, err.value) from None
+    json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+  → Injecting: payload tampered after signing — verify must reject
+  ✗ CORRUPT_MISSED  Ed25519: tampered payload rejected by verify
+        obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+                   ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+      File "/home/burdens/miniconda3/lib/python3.13/json/decoder.py", line 363, in raw_decode
+        raise JSONDecodeError("Expecting value", s, err.value) from None
+    json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+
+────────────────────────────────────────────────────────────
+6 · KeyManager: Session-Resident + Zero on Close
+  ✗ FAIL  KeyManager: sign() raises after close() (key zeroed)
+        obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+                   ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+      File "/home/burdens/miniconda3/lib/python3.13/json/decoder.py", line 363, in raw_decode
+        raise JSONDecodeError("Expecting value", s, err.value) from None
+    json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+
+────────────────────────────────────────────────────────────
+7 · TTL: Expired Unit Invisible
+  ✓ PASS  TTL: past ttl_expires_at (ISO string) → invisible to mem_find
+  → Verifying: expired unit is tombstoned in DB, not hard-deleted
+  ✓ PASS  TTL: expired unit tombstoned in DB (provenance preserved)
+
+────────────────────────────────────────────────────────────
+8 · Canon Immutability
+  ✓ PASS  Canon immutability: second write blocked, original body preserved
+
+────────────────────────────────────────────────────────────
+9 · AST Whitelist — Four Injection Vectors
+  ✓ CORRUPT_CAUGHT  AST blocks injection: __class__.__mro__
+  ✓ CORRUPT_CAUGHT  AST blocks injection: __import__ call
+  ✓ CORRUPT_CAUGHT  AST blocks injection: list comprehension
+  ✓ CORRUPT_CAUGHT  AST blocks injection: attribute chain on variable
+  ✓ PASS  AST safe predicate evaluates correctly: "scope == 'core'"
+
+────────────────────────────────────────────────────────────
+10 · Tool Gateway: Allowlist Enforcement
+  ✓ CORRUPT_CAUGHT  Tool gateway: disallowed host blocked before any network I/O
+
+────────────────────────────────────────────────────────────
+11 · Verifier: Independent of Gateway
+  ✓ PASS  Verifier: unauthorized call caught even when gateway bypassed
+  → Verifying: staged unit discarded atomically on tool violation FAIL
+  ✓ PASS  Verifier FAIL: staged unit writes atomically discarded
+
+────────────────────────────────────────────────────────────
+12 · Capsule Export/Import Roundtrip
+  ✗ FAIL  Capsule roundtrip: unit survives export → import
+        return _default_decoder.decode(s)
+               ~~~~~~~~~~~~~~~~~~~~~~~^^^
+      File "/home/burdens/miniconda3/lib/python3.13/json/decoder.py", line 348, in decode
+        raise JSONDecodeError("Extra data", s, end)
+    json.decoder.JSONDecodeError: Extra data: line 1 column 2 (char 1)
+  → Injecting: tampered capsule signature
+  ✗ CORRUPT_MISSED  Capsule import: tampered signature rejected
+        obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+                   ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+      File "/home/burdens/miniconda3/lib/python3.13/json/decoder.py", line 363, in raw_decode
+        raise JSONDecodeError("Expecting value", s, err.value) from None
+    json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+
+────────────────────────────────────────────────────────────
+13 · Conflict Resolution: keep_local
+  ✗ FAIL  Conflict keep_local: local unit body preserved after import
+        obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+                   ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+      File "/home/burdens/miniconda3/lib/python3.13/json/decoder.py", line 363, in raw_decode
+        raise JSONDecodeError("Expecting value", s, err.value) from None
+    json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+
+────────────────────────────────────────────────────────────
+14 · MCP Adapter: mem_find and mem_store
+  ✗ FAIL  MCP adapter: mem_find returns units, mem_store commits via full cycle
+        obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+                   ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+      File "/home/burdens/miniconda3/lib/python3.13/json/decoder.py", line 363, in raw_decode
+        raise JSONDecodeError("Expecting value", s, err.value) from None
+    json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+
+────────────────────────────────────────────────────────────
+15 · Profile Write Auditable via Provenance
+  ✓ PASS  Style write recorded in provenance (persona drift auditable)
+
+────────────────────────────────────────────────────────────
+FINAL REPORT
+
+  Total checks  : 26
+  Passed         : 17
+  Failed         : 9
+
+  Failed checks:
+    ✗ ZW canonical_bytes: deterministic, unique per content
+                  ~~~~~~~~~~~~~~~^^^
+        File "/home/burdens/compatible/cc/zw_block.py", line 68, in canonical_bytes
+          lines.append(f"ZW[{parsed['block_type']}]")
+                             ~~~~~~^^^^^^^^^^^^^^
+      KeyError: 'block_type'
+    ✗ ZW canonical_bytes: trailing space = different hash (no silent stripping)
+                  ~~~~~~~~~~~~~~~^^^^
+        File "/home/burdens/compatible/cc/zw_block.py", line 68, in canonical_bytes
+          lines.append(f"ZW[{parsed['block_type']}]")
+                             ~~~~~~^^^^^^^^^^^^^^
+      KeyError: 'block_type'
+    ✗ KeyManager.sign: deterministic within session
+          obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+                     ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+        File "/home/burdens/miniconda3/lib/python3.13/json/decoder.py", line 363, in raw_decode
+          raise JSONDecodeError("Expecting value", s, err.value) from None
+      json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+    ✗ Ed25519: tampered payload rejected by verify [corruption]
+          obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+                     ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+        File "/home/burdens/miniconda3/lib/python3.13/json/decoder.py", line 363, in raw_decode
+          raise JSONDecodeError("Expecting value", s, err.value) from None
+      json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+    ✗ KeyManager: sign() raises after close() (key zeroed)
+          obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+                     ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+        File "/home/burdens/miniconda3/lib/python3.13/json/decoder.py", line 363, in raw_decode
+          raise JSONDecodeError("Expecting value", s, err.value) from None
+      json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+    ✗ Capsule roundtrip: unit survives export → import
+          return _default_decoder.decode(s)
+                 ~~~~~~~~~~~~~~~~~~~~~~~^^^
+        File "/home/burdens/miniconda3/lib/python3.13/json/decoder.py", line 348, in decode
+          raise JSONDecodeError("Extra data", s, end)
+      json.decoder.JSONDecodeError: Extra data: line 1 column 2 (char 1)
+    ✗ Capsule import: tampered signature rejected [corruption]
+          obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+                     ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+        File "/home/burdens/miniconda3/lib/python3.13/json/decoder.py", line 363, in raw_decode
+          raise JSONDecodeError("Expecting value", s, err.value) from None
+      json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+    ✗ Conflict keep_local: local unit body preserved after import
+          obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+                     ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+        File "/home/burdens/miniconda3/lib/python3.13/json/decoder.py", line 363, in raw_decode
+          raise JSONDecodeError("Expecting value", s, err.value) from None
+      json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+    ✗ MCP adapter: mem_find returns units, mem_store commits via full cycle
+          obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+                     ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+        File "/home/burdens/miniconda3/lib/python3.13/json/decoder.py", line 363, in raw_decode
+          raise JSONDecodeError("Expecting value", s, err.value) from None
+      json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+
+(base) burdens@pop-os:~/compatible$ sed -n '53,90p' cc/zw_block.py
+def canonical_bytes(parsed: dict) -> tuple[bytes, str]:
+    """
+    Produce deterministic canonical bytes and SHA3-256 hash from a parsed block.
+    
+    Construction:
+    1. Emit header: ZW[{type}]\n
+    2. Sort @meta pairs alphabetically by key. Emit each as @meta {key}: {value}\n
+    3. Emit section body lines, one per line, with \n. Strip trailing space from each.
+    4. Encode as UTF-8.
+    5. Strip trailing whitespace/newlines from final bytes.
+    6. Hash result using SHA3-256.
+    """
+    lines = []
+    
+    # 1. Header
+    lines.append(f"ZW[{parsed['block_type']}]")
+    
+    # 2. Sorted Meta
+    sorted_keys = sorted(parsed['meta'].keys())
+    for key in sorted_keys:
+        lines.append(f"@meta {key}: {parsed['meta'][key]}")
+        
+    # 3. Body lines (strip trailing space)
+    for line in parsed['body_lines']:
+        lines.append(line.rstrip())
+        
+    # Combine with newline join
+    content = "\n".join(lines)
+    
+    # 4 & 5. Encode and strip trailing whitespace/newlines from final byte sequence
+    # Note: strip() on bytes works similarly.
+    final_bytes = content.encode('utf-8').rstrip()
+    
+    # 6. Hash
+    sha3_hash = hashlib.sha3_256(final_bytes).hexdigest()
+    
+    return final_bytes, sha3_hash
+
+(base) burdens@pop-os:~/compatible$ sed -n '1,65p' cc/identity.py
+import base64, json, os, stat, ctypes
+import nacl.signing
+import nacl.exceptions
+
+KEY_FILE = 'cc_identity.key'
+PUB_FILE = 'cc_identity.pub'
+
+def generate_keypair() -> tuple[str, str]:
+    """Returns (sk_b64, vk_b64). Writes both files."""
+    sk = nacl.signing.SigningKey.generate()
+    vk = sk.verify_key
+    sk_b64 = base64.b64encode(bytes(sk)).decode()
+    vk_b64 = base64.b64encode(bytes(vk)).decode()
+    with open(KEY_FILE, 'w') as f:
+        json.dump({'sk': sk_b64, 'vk': vk_b64}, f)
+    os.chmod(KEY_FILE, stat.S_IRUSR | stat.S_IWUSR)  # 600
+    with open(PUB_FILE, 'w') as f:
+        json.dump({'vk': vk_b64}, f)
+    return sk_b64, vk_b64
+
+def sign_payload(payload_bytes: bytes) -> str:
+    """Load key from file. Sign payload. Return base64 sig."""
+    with open(KEY_FILE) as f:
+        sk_b64 = json.load(f)['sk']
+    sk = nacl.signing.SigningKey(base64.b64decode(sk_b64))
+    sig = sk.sign(payload_bytes).signature
+    return base64.b64encode(sig).decode()
+
+def verify_payload(payload_bytes: bytes, sig_b64: str, vk_b64: str) -> None:
+    """Raises nacl.exceptions.BadSignatureError if invalid."""
+    vk = nacl.signing.VerifyKey(base64.b64decode(vk_b64))
+    vk.verify(payload_bytes, base64.b64decode(sig_b64))
+
+
+class KeyManager:
+    """Session-resident signing key with explicit manual zeroing."""
+    def __init__(self, key_path: str):
+        self._key_path = key_path
+        self._signing_key = self._load_key(key_path)
+
+    def _load_key(self, path: str) -> nacl.signing.SigningKey:
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"Key file not found: {path}")
+        with open(path) as f:
+            sk_b64 = json.load(f)['sk']
+        return nacl.signing.SigningKey(base64.b64decode(sk_b64))
+
+    def sign(self, payload: bytes) -> str:
+        if self._signing_key is None:
+            raise RuntimeError("KeyManager is closed. Key has been zeroed.")
+        sig = self._signing_key.sign(payload).signature
+        return base64.b64encode(sig).decode()
+
+    def close(self):
+        """Explicitly zero key bytes and close the session."""
+        if self._signing_key is not None:
+            # Zeroing the underlying bytes of the key
+            key_bytes = bytes(self._signing_key)
+            # Use ctypes to zero the memory. id(obj) is the memory address in CPython.
+            # bytes objects are immutable, but we can target the memory buffer if we are careful.
+            # Actually, the safest way to ensure the SigningKey object is useless is to null it,
+            # but the briefing explicitly asks to zero the bytes using ctypes.memset.
+            ctypes.memset(id(key_bytes), 0, len(key_bytes))
+            self._signing_key = None
+(base) burdens@pop-os:~/compatible$ python3 stress_harness.py
+
+────────────────────────────────────────────────────────────
+1 · ZW Block Canonicalization
+  ✓ PASS  ZW canonical_bytes: deterministic SHA3-256, unique per content
+  ✓ PASS  ZW canonical_bytes: trailing space in body_line normalised out (per spec)
+  ✓ PASS  ZW canonical_bytes: different meta values produce different hash
+
+────────────────────────────────────────────────────────────
+2 · State Machine — Full Cycle COMMIT
+  ✓ PASS  Full cycle COMMIT promotes unit to committed storage
+
+────────────────────────────────────────────────────────────
+3 · Verify Failure — Staged Writes Discarded
+  ✓ PASS  VERIFY FAIL (canon): staged writes discarded, original intact
+
+────────────────────────────────────────────────────────────
+4 · Deterministic Replay
+  ✓ PASS  Deterministic replay: fresh runtime reaches same state_hash
+  → Injecting: single-byte corruption in receipt log
+  ✓ CORRUPT_CAUGHT  Receipt log: single-byte corruption detected on replay
+
+────────────────────────────────────────────────────────────
+5 · Ed25519 Signing
+  ✓ PASS  generate_keypair(): returns (sk_b64, vk_b64)
+  ✓ PASS  KeyManager.sign: deterministic within session
+  → Injecting: payload tampered after signing
+  ✓ CORRUPT_CAUGHT  Ed25519: tampered payload rejected by verify_payload
+
+────────────────────────────────────────────────────────────
+6 · KeyManager: Session-Resident + Zero on Close
+  ✓ PASS  KeyManager: sign() raises RuntimeError after close() (key zeroed)
+
+────────────────────────────────────────────────────────────
+7 · TTL: Expired Unit Invisible
+  ✓ PASS  TTL: past ttl_expires_at → invisible to mem_find
+  → Verifying: expired unit tombstoned in DB (provenance preserved)
+  ✓ PASS  TTL: expired unit tombstoned in DB (provenance preserved)
+
+────────────────────────────────────────────────────────────
+8 · Canon Immutability
+  ✓ PASS  Canon immutability: second write blocked, original preserved
+
+────────────────────────────────────────────────────────────
+9 · AST Whitelist — Five Injection Vectors
+  ✓ CORRUPT_CAUGHT  AST blocks: __class__.__mro__
+  ✓ CORRUPT_CAUGHT  AST blocks: __import__ call
+  ✓ CORRUPT_CAUGHT  AST blocks: list comprehension
+  ✓ CORRUPT_CAUGHT  AST blocks: attribute chain on var
+  ✓ PASS  AST safe predicate evaluates correctly: "scope == 'core'"
+
+────────────────────────────────────────────────────────────
+10 · Tool Gateway: Allowlist Enforcement
+  ✓ CORRUPT_CAUGHT  Tool gateway: disallowed host blocked before network I/O
+
+────────────────────────────────────────────────────────────
+11 · Verifier: Independent of Gateway
+  ✓ PASS  Verifier: unauthorized call caught even when gateway bypassed
+  → Verifying: staged unit discarded atomically on FAIL
+  ✓ PASS  Verifier FAIL: staged unit writes atomically discarded
+
+────────────────────────────────────────────────────────────
+12 · Capsule Export/Import Roundtrip
+  ✗ FAIL  Capsule roundtrip: unit survives export → import
+        self.memory = MemoryStore(db_path)
+                      ~~~~~~~~~~~^^^^^^^^^
+      File "/home/burdens/compatible/cc/memory.py", line 10, in __init__
+        self.conn = sqlite3.connect(self.db_path)
+                    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+    TypeError: expected str, bytes or os.PathLike object, not AgentRuntime
+  → Injecting: tampered capsule signature
+  ✗ CORRUPT_MISSED  Capsule import: tampered signature rejected
+        self.memory = MemoryStore(db_path)
+                      ~~~~~~~~~~~^^^^^^^^^
+      File "/home/burdens/compatible/cc/memory.py", line 10, in __init__
+        self.conn = sqlite3.connect(self.db_path)
+                    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+    TypeError: expected str, bytes or os.PathLike object, not AgentRuntime
+
+────────────────────────────────────────────────────────────
+13 · Conflict Resolution: keep_local
+  ✗ FAIL  Conflict keep_local: local unit body preserved after import
+        self.memory = MemoryStore(db_path)
+                      ~~~~~~~~~~~^^^^^^^^^
+      File "/home/burdens/compatible/cc/memory.py", line 10, in __init__
+        self.conn = sqlite3.connect(self.db_path)
+                    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+    TypeError: expected str, bytes or os.PathLike object, not AgentRuntime
+
+────────────────────────────────────────────────────────────
+14 · MCP Adapter: mem_find and mem_store
+  ✗ FAIL  MCP adapter: mem_find returns units, mem_store commits via full cycle
+        return future.result()
+               ~~~~~~~~~~~~~^^
+      File "/tmp/tmpsik2myvl.py", line 31, in run
+        res1 = await server.call_tool("mem_find", {"scope":"core"})
+                     ^^^^^^^^^^^^^^^^
+    AttributeError: 'tuple' object has no attribute 'call_tool'
+
+────────────────────────────────────────────────────────────
+15 · Profile Write Auditable via Provenance
+  ✓ PASS  Style write recorded in provenance (persona drift auditable)
+
+────────────────────────────────────────────────────────────
+FINAL REPORT
+
+  Total checks  : 27
+  Passed         : 23
+  Failed         : 4
+
+  Failed checks:
+    ✗ Capsule roundtrip: unit survives export → import
+                        ~~~~~~~~~~~^^^^^^^^^
+        File "/home/burdens/compatible/cc/memory.py", line 10, in __init__
+          self.conn = sqlite3.connect(self.db_path)
+                      ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+      TypeError: expected str, bytes or os.PathLike object, not AgentRuntime
+    ✗ Capsule import: tampered signature rejected [corruption]
+                        ~~~~~~~~~~~^^^^^^^^^
+        File "/home/burdens/compatible/cc/memory.py", line 10, in __init__
+          self.conn = sqlite3.connect(self.db_path)
+                      ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+      TypeError: expected str, bytes or os.PathLike object, not AgentRuntime
+    ✗ Conflict keep_local: local unit body preserved after import
+                        ~~~~~~~~~~~^^^^^^^^^
+        File "/home/burdens/compatible/cc/memory.py", line 10, in __init__
+          self.conn = sqlite3.connect(self.db_path)
+                      ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+      TypeError: expected str, bytes or os.PathLike object, not AgentRuntime
+    ✗ MCP adapter: mem_find returns units, mem_store commits via full cycle
+                 ~~~~~~~~~~~~~^^
+        File "/tmp/tmpsik2myvl.py", line 31, in run
+          res1 = await server.call_tool("mem_find", {"scope":"core"})
+                       ^^^^^^^^^^^^^^^^
+      AttributeError: 'tuple' object has no attribute 'call_tool'
+
+(base) burdens@pop-os:~/compatible$ grep -n "^def import_capsule\|^def export_capsule" cc/capsule.py
+147:def export_capsule(db_path: str, capsule_path: str):
+164:def import_capsule(capsule_path: str, db_path: str):
+(base) burdens@pop-os:~/compatible$ grep -n "^def build_server\|^class\|return" cc/mcp_adapter.py | head -20
+16:    return {
+25:def build_server(rt: AgentRuntime, key_manager: KeyManager) -> Server:
+30:        return [
+95:                return [types.TextContent(type='text', text=json.dumps(results))]
+111:                return [types.TextContent(type='text', text=json.dumps({'outcome': result}))]
+118:                # For run_cycle we'll use a pass-through that returns the plan.
+119:                def _adapter_act(p): return p
+125:                return [types.TextContent(type='text', text=json.dumps({'outcome': result}))]
+131:                return [types.TextContent(type='text', text=json.dumps(caps))]
+136:            return [types.TextContent(type='text', text=json.dumps({'error': str(e)}))]
+138:    return server, {"mem_find": call_tool, "mem_store": call_tool, "run_cycle": call_tool, "capsule_export": call_tool, "list_tools": list_tools}
+(base) burdens@pop-os:~/compatible$ python3 stress_harness.py
+
+────────────────────────────────────────────────────────────
+1 · ZW Block Canonicalization
+  ✓ PASS  ZW canonical_bytes: deterministic SHA3-256, unique per content
+  ✓ PASS  ZW canonical_bytes: trailing space in body_line normalised out (per spec)
+  ✓ PASS  ZW canonical_bytes: different meta values produce different hash
+
+────────────────────────────────────────────────────────────
+2 · State Machine — Full Cycle COMMIT
+  ✓ PASS  Full cycle COMMIT promotes unit to committed storage
+
+────────────────────────────────────────────────────────────
+3 · Verify Failure — Staged Writes Discarded
+  ✓ PASS  VERIFY FAIL (canon): staged writes discarded, original intact
+
+────────────────────────────────────────────────────────────
+4 · Deterministic Replay
+  ✓ PASS  Deterministic replay: fresh runtime reaches same state_hash
+  → Injecting: single-byte corruption in receipt log
+  ✓ CORRUPT_CAUGHT  Receipt log: single-byte corruption detected on replay
+
+────────────────────────────────────────────────────────────
+5 · Ed25519 Signing
+  ✓ PASS  generate_keypair(): returns (sk_b64, vk_b64)
+  ✓ PASS  KeyManager.sign: deterministic within session
+  → Injecting: payload tampered after signing
+  ✓ CORRUPT_CAUGHT  Ed25519: tampered payload rejected by verify_payload
+
+────────────────────────────────────────────────────────────
+6 · KeyManager: Session-Resident + Zero on Close
+  ✓ PASS  KeyManager: sign() raises RuntimeError after close() (key zeroed)
+
+────────────────────────────────────────────────────────────
+7 · TTL: Expired Unit Invisible
+  ✓ PASS  TTL: past ttl_expires_at → invisible to mem_find
+  → Verifying: expired unit tombstoned in DB (provenance preserved)
+  ✓ PASS  TTL: expired unit tombstoned in DB (provenance preserved)
+
+────────────────────────────────────────────────────────────
+8 · Canon Immutability
+  ✓ PASS  Canon immutability: second write blocked, original preserved
+
+────────────────────────────────────────────────────────────
+9 · AST Whitelist — Five Injection Vectors
+  ✓ CORRUPT_CAUGHT  AST blocks: __class__.__mro__
+  ✓ CORRUPT_CAUGHT  AST blocks: __import__ call
+  ✓ CORRUPT_CAUGHT  AST blocks: list comprehension
+  ✓ CORRUPT_CAUGHT  AST blocks: attribute chain on var
+  ✓ PASS  AST safe predicate evaluates correctly: "scope == 'core'"
+
+────────────────────────────────────────────────────────────
+10 · Tool Gateway: Allowlist Enforcement
+  ✓ CORRUPT_CAUGHT  Tool gateway: disallowed host blocked before network I/O
+
+────────────────────────────────────────────────────────────
+11 · Verifier: Independent of Gateway
+  ✓ PASS  Verifier: unauthorized call caught even when gateway bypassed
+  → Verifying: staged unit discarded atomically on FAIL
+  ✓ PASS  Verifier FAIL: staged unit writes atomically discarded
+
+────────────────────────────────────────────────────────────
+12 · Capsule Export/Import Roundtrip
+  ✗ FAIL  Capsule roundtrip: unit survives export → import
+        self.memory = MemoryStore(db_path)
+                      ~~~~~~~~~~~^^^^^^^^^
+      File "/home/burdens/compatible/cc/memory.py", line 10, in __init__
+        self.conn = sqlite3.connect(self.db_path)
+                    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+    TypeError: expected str, bytes or os.PathLike object, not AgentRuntime
+  → Injecting: tampered capsule signature
+  ✗ CORRUPT_MISSED  Capsule import: tampered signature rejected
+        self.memory = MemoryStore(db_path)
+                      ~~~~~~~~~~~^^^^^^^^^
+      File "/home/burdens/compatible/cc/memory.py", line 10, in __init__
+        self.conn = sqlite3.connect(self.db_path)
+                    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+    TypeError: expected str, bytes or os.PathLike object, not AgentRuntime
+
+────────────────────────────────────────────────────────────
+13 · Conflict Resolution: keep_local
+  ✗ FAIL  Conflict keep_local: local unit body preserved after import
+        self.memory = MemoryStore(db_path)
+                      ~~~~~~~~~~~^^^^^^^^^
+      File "/home/burdens/compatible/cc/memory.py", line 10, in __init__
+        self.conn = sqlite3.connect(self.db_path)
+                    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+    TypeError: expected str, bytes or os.PathLike object, not AgentRuntime
+
+────────────────────────────────────────────────────────────
+14 · MCP Adapter: mem_find and mem_store
+  ✗ FAIL  MCP adapter: mem_find returns units, mem_store commits via full cycle
+        return future.result()
+               ~~~~~~~~~~~~~^^
+      File "/tmp/tmplxr1b9ag.py", line 31, in run
+        res1 = await server.call_tool("mem_find", {"scope":"core"})
+                     ^^^^^^^^^^^^^^^^
+    AttributeError: 'tuple' object has no attribute 'call_tool'
+
+────────────────────────────────────────────────────────────
+15 · Profile Write Auditable via Provenance
+  ✓ PASS  Style write recorded in provenance (persona drift auditable)
+
+────────────────────────────────────────────────────────────
+FINAL REPORT
+
+  Total checks  : 27
+  Passed         : 23
+  Failed         : 4
+
+  Failed checks:
+    ✗ Capsule roundtrip: unit survives export → import
+                        ~~~~~~~~~~~^^^^^^^^^
+        File "/home/burdens/compatible/cc/memory.py", line 10, in __init__
+          self.conn = sqlite3.connect(self.db_path)
+                      ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+      TypeError: expected str, bytes or os.PathLike object, not AgentRuntime
+    ✗ Capsule import: tampered signature rejected [corruption]
+                        ~~~~~~~~~~~^^^^^^^^^
+        File "/home/burdens/compatible/cc/memory.py", line 10, in __init__
+          self.conn = sqlite3.connect(self.db_path)
+                      ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+      TypeError: expected str, bytes or os.PathLike object, not AgentRuntime
+    ✗ Conflict keep_local: local unit body preserved after import
+                        ~~~~~~~~~~~^^^^^^^^^
+        File "/home/burdens/compatible/cc/memory.py", line 10, in __init__
+          self.conn = sqlite3.connect(self.db_path)
+                      ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+      TypeError: expected str, bytes or os.PathLike object, not AgentRuntime
+    ✗ MCP adapter: mem_find returns units, mem_store commits via full cycle
+                 ~~~~~~~~~~~~~^^
+        File "/tmp/tmplxr1b9ag.py", line 31, in run
+          res1 = await server.call_tool("mem_find", {"scope":"core"})
+                       ^^^^^^^^^^^^^^^^
+      AttributeError: 'tuple' object has no attribute 'call_tool'
+
+(base) burdens@pop-os:~/compatible$ grep -n "^def import_capsule\|^def export_capsule" cc/capsule.py
+147:def export_capsule(db_path: str, capsule_path: str):
+164:def import_capsule(capsule_path: str, db_path: str):
+(base) burdens@pop-os:~/compatible$ grep -n "^def build_server\|^class\|return" cc/mcp_adapter.py | head -20
+16:    return {
+25:def build_server(rt: AgentRuntime, key_manager: KeyManager) -> Server:
+30:        return [
+95:                return [types.TextContent(type='text', text=json.dumps(results))]
+111:                return [types.TextContent(type='text', text=json.dumps({'outcome': result}))]
+118:                # For run_cycle we'll use a pass-through that returns the plan.
+119:                def _adapter_act(p): return p
+125:                return [types.TextContent(type='text', text=json.dumps({'outcome': result}))]
+131:                return [types.TextContent(type='text', text=json.dumps(caps))]
+136:            return [types.TextContent(type='text', text=json.dumps({'error': str(e)}))]
+138:    return server, {"mem_find": call_tool, "mem_store": call_tool, "run_cycle": call_tool, "capsule_export": call_tool, "list_tools": list_tools}
+(base) burdens@pop-os:~/compatible$ python3 stress_harness.py
+
+────────────────────────────────────────────────────────────
+1 · ZW Block Canonicalization
+  ✓ PASS  ZW canonical_bytes: deterministic SHA3-256, unique per content
+  ✓ PASS  ZW canonical_bytes: trailing space in body_line normalised out (per spec)
+  ✓ PASS  ZW canonical_bytes: different meta values produce different hash
+
+────────────────────────────────────────────────────────────
+2 · State Machine — Full Cycle COMMIT
+  ✓ PASS  Full cycle COMMIT promotes unit to committed storage
+
+────────────────────────────────────────────────────────────
+3 · Verify Failure — Staged Writes Discarded
+  ✓ PASS  VERIFY FAIL (canon): staged writes discarded, original intact
+
+────────────────────────────────────────────────────────────
+4 · Deterministic Replay
+  ✓ PASS  Deterministic replay: fresh runtime reaches same state_hash
+  → Injecting: single-byte corruption in receipt log
+  ✓ CORRUPT_CAUGHT  Receipt log: single-byte corruption detected on replay
+
+────────────────────────────────────────────────────────────
+5 · Ed25519 Signing
+  ✓ PASS  generate_keypair(): returns (sk_b64, vk_b64)
+  ✓ PASS  KeyManager.sign: deterministic within session
+  → Injecting: payload tampered after signing
+  ✓ CORRUPT_CAUGHT  Ed25519: tampered payload rejected by verify_payload
+
+────────────────────────────────────────────────────────────
+6 · KeyManager: Session-Resident + Zero on Close
+  ✓ PASS  KeyManager: sign() raises RuntimeError after close() (key zeroed)
+
+────────────────────────────────────────────────────────────
+7 · TTL: Expired Unit Invisible
+  ✓ PASS  TTL: past ttl_expires_at → invisible to mem_find
+  → Verifying: expired unit tombstoned in DB (provenance preserved)
+  ✓ PASS  TTL: expired unit tombstoned in DB (provenance preserved)
+
+────────────────────────────────────────────────────────────
+8 · Canon Immutability
+  ✓ PASS  Canon immutability: second write blocked, original preserved
+
+────────────────────────────────────────────────────────────
+9 · AST Whitelist — Five Injection Vectors
+  ✓ CORRUPT_CAUGHT  AST blocks: __class__.__mro__
+  ✓ CORRUPT_CAUGHT  AST blocks: __import__ call
+  ✓ CORRUPT_CAUGHT  AST blocks: list comprehension
+  ✓ CORRUPT_CAUGHT  AST blocks: attribute chain on var
+  ✓ PASS  AST safe predicate evaluates correctly: "scope == 'core'"
+
+────────────────────────────────────────────────────────────
+10 · Tool Gateway: Allowlist Enforcement
+  ✓ CORRUPT_CAUGHT  Tool gateway: disallowed host blocked before network I/O
+
+────────────────────────────────────────────────────────────
+11 · Verifier: Independent of Gateway
+  ✓ PASS  Verifier: unauthorized call caught even when gateway bypassed
+  → Verifying: staged unit discarded atomically on FAIL
+  ✓ PASS  Verifier FAIL: staged unit writes atomically discarded
+
+────────────────────────────────────────────────────────────
+12 · Capsule Export/Import Roundtrip
+  ✓ PASS  Capsule roundtrip: unit survives export → import
+  → Injecting: tampered capsule signature
+  ✗ CORRUPT_MISSED  Capsule import: tampered signature rejected
+    [LOG] Appended rcpt_d8859da5 | Log Head: c16438cf0a92...
+    MISSED
+
+────────────────────────────────────────────────────────────
+13 · Conflict Resolution: keep_local
+  ✓ PASS  Conflict keep_local: local unit body preserved after import
+
+────────────────────────────────────────────────────────────
+14 · MCP Adapter: mem_find and mem_store
+  ✓ PASS  MCP adapter: mem_find returns units, mem_store commits via full cycle
+
+────────────────────────────────────────────────────────────
+15 · Profile Write Auditable via Provenance
+  ✓ PASS  Style write recorded in provenance (persona drift auditable)
+
+────────────────────────────────────────────────────────────
+FINAL REPORT
+
+  Total checks  : 27
+  Passed         : 26
+  Failed         : 1
+
+  Failed checks:
+    ✗ Capsule import: tampered signature rejected [corruption]
+      [LOG] Appended rcpt_d8859da5 | Log Head: c16438cf0a92...
+      MISSED
+
+(base) burdens@pop-os:~/compatible$ python3 -c "
+import tempfile, os, json
+from cc.runtime import AgentRuntime
+from cc.capsule import export_capsule
+with tempfile.TemporaryDirectory() as tmp:
+    rt = AgentRuntime(db_path=os.path.join(tmp,'t.db'), log_path=os.path.join(tmp,'r.jsonl'))
+    export_capsule(os.path.join(tmp,'t.db'), os.path.join(tmp,'caps.json'))
+    print(json.load(open(os.path.join(tmp,'caps.json'))).get('signature'))
+"
+None
+(base) burdens@pop-os:~/compatible$ python3 stress_harness.py
+
+────────────────────────────────────────────────────────────
+1 · ZW Block Canonicalization
+  ✓ PASS  ZW canonical_bytes: deterministic SHA3-256, unique per content
+  ✓ PASS  ZW canonical_bytes: trailing space in body_line normalised out (per spec)
+  ✓ PASS  ZW canonical_bytes: different meta values produce different hash
+
+────────────────────────────────────────────────────────────
+2 · State Machine — Full Cycle COMMIT
+  ✓ PASS  Full cycle COMMIT promotes unit to committed storage
+
+────────────────────────────────────────────────────────────
+3 · Verify Failure — Staged Writes Discarded
+  ✓ PASS  VERIFY FAIL (canon): staged writes discarded, original intact
+
+────────────────────────────────────────────────────────────
+4 · Deterministic Replay
+  ✓ PASS  Deterministic replay: fresh runtime reaches same state_hash
+  → Injecting: single-byte corruption in receipt log
+  ✓ CORRUPT_CAUGHT  Receipt log: single-byte corruption detected on replay
+
+────────────────────────────────────────────────────────────
+5 · Ed25519 Signing
+  ✓ PASS  generate_keypair(): returns (sk_b64, vk_b64)
+  ✓ PASS  KeyManager.sign: deterministic within session
+  → Injecting: payload tampered after signing
+  ✓ CORRUPT_CAUGHT  Ed25519: tampered payload rejected by verify_payload
+
+────────────────────────────────────────────────────────────
+6 · KeyManager: Session-Resident + Zero on Close
+  ✓ PASS  KeyManager: sign() raises RuntimeError after close() (key zeroed)
+
+────────────────────────────────────────────────────────────
+7 · TTL: Expired Unit Invisible
+  ✓ PASS  TTL: past ttl_expires_at → invisible to mem_find
+  → Verifying: expired unit tombstoned in DB (provenance preserved)
+  ✓ PASS  TTL: expired unit tombstoned in DB (provenance preserved)
+  → Capsule signature: null (unsigned) — tamper check deferred to Week 7
+
+────────────────────────────────────────────────────────────
+8 · Canon Immutability
+  ✓ PASS  Canon immutability: second write blocked, original preserved
+
+────────────────────────────────────────────────────────────
+9 · AST Whitelist — Five Injection Vectors
+  ✓ CORRUPT_CAUGHT  AST blocks: __class__.__mro__
+  ✓ CORRUPT_CAUGHT  AST blocks: __import__ call
+  ✓ CORRUPT_CAUGHT  AST blocks: list comprehension
+  ✓ CORRUPT_CAUGHT  AST blocks: attribute chain on var
+  ✓ PASS  AST safe predicate evaluates correctly: "scope == 'core'"
+
+────────────────────────────────────────────────────────────
+10 · Tool Gateway: Allowlist Enforcement
+  ✓ CORRUPT_CAUGHT  Tool gateway: disallowed host blocked before network I/O
+
+────────────────────────────────────────────────────────────
+11 · Verifier: Independent of Gateway
+  ✓ PASS  Verifier: unauthorized call caught even when gateway bypassed
+  → Verifying: staged unit discarded atomically on FAIL
+  ✓ PASS  Verifier FAIL: staged unit writes atomically discarded
+
+────────────────────────────────────────────────────────────
+12 · Capsule Export/Import Roundtrip
+  ✓ PASS  Capsule roundtrip: unit survives export → import
+  → Injecting: tampered capsule signature
+  ✗ CORRUPT_MISSED  Capsule import: tampered signature rejected
+    [LOG] Appended rcpt_7cfa8a45 | Log Head: 9a17badf6994...
+    MISSED
+
+────────────────────────────────────────────────────────────
+13 · Conflict Resolution: keep_local
+  ✓ PASS  Conflict keep_local: local unit body preserved after import
+
+────────────────────────────────────────────────────────────
+14 · MCP Adapter: mem_find and mem_store
+  ✓ PASS  MCP adapter: mem_find returns units, mem_store commits via full cycle
+
+────────────────────────────────────────────────────────────
+15 · Profile Write Auditable via Provenance
+  ✓ PASS  Style write recorded in provenance (persona drift auditable)
+
+────────────────────────────────────────────────────────────
+FINAL REPORT
+
+  Total checks  : 28
+  Passed         : 25
+  Skipped/Info   : 1
+  Failed         : 2
+
+  Failed checks:
+    ✗ TTL tombstone preservation
+      hard delete loses provenance
+    ✗ Capsule import: tampered signature rejected [corruption]
+      [LOG] Appended rcpt_7cfa8a45 | Log Head: 9a17badf6994...
+      MISSED
+
+(base) burdens@pop-os:~/compatible$ python3 stress_harness.py
+
+────────────────────────────────────────────────────────────
+1 · ZW Block Canonicalization
+  ✓ PASS  ZW canonical_bytes: deterministic SHA3-256, unique per content
+  ✓ PASS  ZW canonical_bytes: trailing space in body_line normalised out (per spec)
+  ✓ PASS  ZW canonical_bytes: different meta values produce different hash
+
+────────────────────────────────────────────────────────────
+2 · State Machine — Full Cycle COMMIT
+  ✓ PASS  Full cycle COMMIT promotes unit to committed storage
+
+────────────────────────────────────────────────────────────
+3 · Verify Failure — Staged Writes Discarded
+  ✓ PASS  VERIFY FAIL (canon): staged writes discarded, original intact
+
+────────────────────────────────────────────────────────────
+4 · Deterministic Replay
+  ✓ PASS  Deterministic replay: fresh runtime reaches same state_hash
+  → Injecting: single-byte corruption in receipt log
+  ✓ CORRUPT_CAUGHT  Receipt log: single-byte corruption detected on replay
+
+────────────────────────────────────────────────────────────
+5 · Ed25519 Signing
+  ✓ PASS  generate_keypair(): returns (sk_b64, vk_b64)
+  ✓ PASS  KeyManager.sign: deterministic within session
+  → Injecting: payload tampered after signing
+  ✓ CORRUPT_CAUGHT  Ed25519: tampered payload rejected by verify_payload
+
+────────────────────────────────────────────────────────────
+6 · KeyManager: Session-Resident + Zero on Close
+  ✓ PASS  KeyManager: sign() raises RuntimeError after close() (key zeroed)
+
+────────────────────────────────────────────────────────────
+7 · TTL: Expired Unit Invisible
+  ✓ PASS  TTL: past ttl_expires_at → invisible to mem_find
+  → Verifying: expired unit tombstoned in DB (provenance preserved)
+  ✓ PASS  TTL: expired unit tombstoned in DB (provenance preserved)
+
+────────────────────────────────────────────────────────────
+8 · Canon Immutability
+  ✓ PASS  Canon immutability: second write blocked, original preserved
+
+────────────────────────────────────────────────────────────
+9 · AST Whitelist — Five Injection Vectors
+  ✓ CORRUPT_CAUGHT  AST blocks: __class__.__mro__
+  ✓ CORRUPT_CAUGHT  AST blocks: __import__ call
+  ✓ CORRUPT_CAUGHT  AST blocks: list comprehension
+  ✓ CORRUPT_CAUGHT  AST blocks: attribute chain on var
+  ✓ PASS  AST safe predicate evaluates correctly: "scope == 'core'"
+
+────────────────────────────────────────────────────────────
+10 · Tool Gateway: Allowlist Enforcement
+  ✓ CORRUPT_CAUGHT  Tool gateway: disallowed host blocked before network I/O
+
+────────────────────────────────────────────────────────────
+11 · Verifier: Independent of Gateway
+  ✓ PASS  Verifier: unauthorized call caught even when gateway bypassed
+  → Verifying: staged unit discarded atomically on FAIL
+  ✓ PASS  Verifier FAIL: staged unit writes atomically discarded
+
+────────────────────────────────────────────────────────────
+12 · Capsule Export/Import Roundtrip
+  ✓ PASS  Capsule roundtrip: unit survives export → import
+  → Capsule signature: not yet enforced in export_capsule (Week 7 — skipping tamper check)
+  ⊘ DEFERRED  Capsule import: tampered signature rejected [corruption]
+      (export_capsule does not yet sign — test deferred to Week 7)
+
+────────────────────────────────────────────────────────────
+13 · Conflict Resolution: keep_local
+  ✓ PASS  Conflict keep_local: local unit body preserved after import
+
+────────────────────────────────────────────────────────────
+14 · MCP Adapter: mem_find and mem_store
+  ✓ PASS  MCP adapter: mem_find returns units, mem_store commits via full cycle
+
+────────────────────────────────────────────────────────────
+15 · Profile Write Auditable via Provenance
+  ✓ PASS  Style write recorded in provenance (persona drift auditable)
+
+────────────────────────────────────────────────────────────
+FINAL REPORT
+
+  Total checks  : 27
+  Passed         : 26
+  Skipped/Info   : 1
+
+  All executed checks passed.
+
+(base) burdens@pop-os:~/compatible$ python3 stress_harness.py
+
+────────────────────────────────────────────────────────────
+1 · ZW Block Canonicalization
+  ✓ PASS  ZW canonical_bytes: deterministic SHA3-256, unique per content
+  ✓ PASS  ZW canonical_bytes: trailing space in body_line normalised out (per spec)
+  ✓ PASS  ZW canonical_bytes: different meta values produce different hash
+
+────────────────────────────────────────────────────────────
+2 · State Machine — Full Cycle COMMIT
+  ✓ PASS  Full cycle COMMIT promotes unit to committed storage
+
+────────────────────────────────────────────────────────────
+3 · Verify Failure — Staged Writes Discarded
+  ✓ PASS  VERIFY FAIL (canon): staged writes discarded, original intact
+
+────────────────────────────────────────────────────────────
+4 · Deterministic Replay
+  ✓ PASS  Deterministic replay: fresh runtime reaches same state_hash
+  → Injecting: single-byte corruption in receipt log
+  ✓ CORRUPT_CAUGHT  Receipt log: single-byte corruption detected on replay
+
+────────────────────────────────────────────────────────────
+5 · Ed25519 Signing
+  ✓ PASS  generate_keypair(): returns (sk_b64, vk_b64)
+  ✓ PASS  KeyManager.sign: deterministic within session
+  → Injecting: payload tampered after signing
+  ✓ CORRUPT_CAUGHT  Ed25519: tampered payload rejected by verify_payload
+
+────────────────────────────────────────────────────────────
+6 · KeyManager: Session-Resident + Zero on Close
+  ✓ PASS  KeyManager: sign() raises RuntimeError after close() (key zeroed)
+
+────────────────────────────────────────────────────────────
+7 · TTL: Expired Unit Invisible
+  ✓ PASS  TTL: past ttl_expires_at → invisible to mem_find
+  → Verifying: expired unit tombstoned in DB (provenance preserved)
+  ✓ PASS  TTL: expired unit tombstoned in DB (provenance preserved)
+
+────────────────────────────────────────────────────────────
+8 · Canon Immutability
+  ✓ PASS  Canon immutability: second write blocked, original preserved
+
+────────────────────────────────────────────────────────────
+9 · AST Whitelist — Five Injection Vectors
+  ✓ CORRUPT_CAUGHT  AST blocks: __class__.__mro__
+  ✓ CORRUPT_CAUGHT  AST blocks: __import__ call
+  ✓ CORRUPT_CAUGHT  AST blocks: list comprehension
+  ✓ CORRUPT_CAUGHT  AST blocks: attribute chain on var
+  ✓ PASS  AST safe predicate evaluates correctly: "scope == 'core'"
+
+────────────────────────────────────────────────────────────
+10 · Tool Gateway: Allowlist Enforcement
+  ✓ CORRUPT_CAUGHT  Tool gateway: disallowed host blocked before network I/O
+
+────────────────────────────────────────────────────────────
+11 · Verifier: Independent of Gateway
+  ✓ PASS  Verifier: unauthorized call caught even when gateway bypassed
+  → Verifying: staged unit discarded atomically on FAIL
+  ✓ PASS  Verifier FAIL: staged unit writes atomically discarded
+
+────────────────────────────────────────────────────────────
+12 · Capsule Export/Import Roundtrip
+  ✓ PASS  Capsule roundtrip: unit survives export → import
+  → Capsule signature: not yet enforced in export_capsule (Week 7 — skipping tamper check)
+  ⊘ DEFERRED  Capsule import: tampered signature rejected [corruption]
+      (export_capsule does not yet sign — test deferred to Week 7)
+
+────────────────────────────────────────────────────────────
+13 · Conflict Resolution: keep_local
+  ✓ PASS  Conflict keep_local: local unit body preserved after import
+
+────────────────────────────────────────────────────────────
+14 · MCP Adapter: mem_find and mem_store
+  ✓ PASS  MCP adapter: mem_find returns units, mem_store commits via full cycle
+
+────────────────────────────────────────────────────────────
+15 · Profile Write Auditable via Provenance
+  ✓ PASS  Style write recorded in provenance (persona drift auditable)
+
+────────────────────────────────────────────────────────────
+FINAL REPORT
+
+  Total checks  : 27
+  Passed         : 26
+  Skipped/Info   : 1
+
+  All executed checks passed.
+
+(base) burdens@pop-os:~/compatible$ python3 -m pytest cc/tests/test_mvp.py -v -s 2>&1 | tee docs/test_output.txt
+============================= test session starts ==============================
+platform linux -- Python 3.13.11, pytest-9.0.2, pluggy-1.5.0 -- /home/burdens/miniconda3/bin/python3
+cachedir: .pytest_cache
+rootdir: /home/burdens/compatible
+plugins: cov-7.0.0, asyncio-1.3.0, anyio-4.12.1
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 28 items
+
+cc/tests/test_mvp.py::test_zw_block_canonicalization PASSED
+cc/tests/test_mvp.py::test_full_cycle_success [LOG] Appended rcpt_f16a6868 | Log Head: 635c114cf12b...
+PASSED
+cc/tests/test_mvp.py::test_verify_failure [LOG] Appended rcpt_aea6df33 | Log Head: 48c0b660dcbe...
+PASSED
+cc/tests/test_mvp.py::test_deterministic_replay [LOG] Appended rcpt_1a1ff175 | Log Head: b7c80d27d617...
+[LOG] Appended rcpt_c9ba97f2 | Log Head: cc0dc1f18792...
+[REPLAY] Replaying test_receipts.jsonl...
+[REPLAY] Applied snap_754901ca | State Hash: d2c3fc0a4c99...
+[REPLAY] Applied snap_96d7ef24 | State Hash: c3dda412ac74...
+[REPLAY] Finished. Final State Hash: c3dda412ac74
+SUCCESS: State hashes match exactly! Deterministic replay confirmed.
+Original:  c3dda412ac74a56535933e7c74c9b1de78a9d628258c82247ddffd3e9ad3136a
+Replayed:  c3dda412ac74a56535933e7c74c9b1de78a9d628258c82247ddffd3e9ad3136a
+PASSED
+cc/tests/test_mvp.py::test_capsule_export [LOG] Appended rcpt_f5e8978d | Log Head: 6462f2afad4b...
+PASSED
+cc/tests/test_mvp.py::test_sign_and_verify PASSED
+cc/tests/test_mvp.py::test_tampered_sig_rejected PASSED
+cc/tests/test_mvp.py::test_capsule_export_import_roundtrip [LOG] Appended rcpt_fa42cd42 | Log Head: ffaeb1a59dfc...
+PASSED
+cc/tests/test_mvp.py::test_capsule_import_rejects_bad_sig [LOG] Appended rcpt_6d64acfd | Log Head: 174664db5fa6...
+PASSED
+cc/tests/test_mvp.py::test_conflict_keep_local PASSED
+cc/tests/test_mvp.py::test_12_ttl_unit_invisible_after_expiry PASSED
+cc/tests/test_mvp.py::test_13_ttl_survives_capsule_boundary PASSED
+cc/tests/test_mvp.py::test_14_canon_scope_immutable [LOG] Appended rcpt_75533cd1 | Log Head: 3fd043db115d...
+[LOG] Appended rcpt_93e227d8 | Log Head: 4dbaede12556...
+PASSED
+cc/tests/test_mvp.py::test_15_policy_rule_violation_blocks_commit [LOG] Appended rcpt_c9263295 | Log Head: 93120c7cfa4e...
+[LOG] Appended rcpt_303628b5 | Log Head: 860d3f960c2e...
+PASSED
+cc/tests/test_mvp.py::test_corrupted_replay [LOG] Appended rcpt_0c738745 | Log Head: 07cf0678bebc...
+[LOG] Appended rcpt_694caddb | Log Head: 9767b29c9e2c...
+[REPLAY] Replaying test_receipts.jsonl...
+[REPLAY] Applied snap_894db020 | State Hash: d2c3fc0a4c99...
+PASSED
+cc/tests/test_mvp.py::test_16_zw_block_deterministic_hash PASSED
+cc/tests/test_mvp.py::test_17_style_profile_write_is_auditable [LOG] Appended rcpt_726f8e29 | Log Head: 5d7c1498fa1e...
+[LOG] Appended rcpt_260ab351 | Log Head: f8887d5fd90d...
+PASSED
+cc/tests/test_mvp.py::test_18_allowed_tool_call_commits [LOG] Appended rcpt_145af2fa | Log Head: dec8618b0ee1...
+PASSED
+cc/tests/test_mvp.py::test_19_gateway_blocks_disallowed_host [LOG] Appended rcpt_f73928ab | Log Head: b049984ce2d3...
+PASSED
+cc/tests/test_mvp.py::test_20_verifier_catches_unauthorized_call [LOG] Appended rcpt_834c3aa9 | Log Head: cc082a465218...
+PASSED
+cc/tests/test_mvp.py::test_21_staged_writes_discarded_on_tool_violation [LOG] Appended rcpt_12c33860 | Log Head: ece076ebb57c...
+PASSED
+cc/tests/test_mvp.py::test_22_ast_whitelist_blocks_injection PASSED
+cc/tests/test_mvp.py::test_23_key_manager_session_resident PASSED
+cc/tests/test_mvp.py::test_24_mcp_mem_find_returns_results PASSED
+cc/tests/test_mvp.py::test_25_mcp_mem_store_full_cycle [LOG] Appended rcpt_bd29ae8f | Log Head: 027163b2ee1a...
+PASSED
+cc/tests/test_mvp.py::test_26_ttl_tombstone_not_hard_deleted [LOG] Appended rcpt_79d1d231 | Log Head: 0efa11f5a29b...
+PASSED
+cc/tests/test_mvp.py::test_27_signed_capsule_tamper_rejected [LOG] Appended rcpt_27cc1776 | Log Head: d8d1ed47b493...
+PASSED
+cc/tests/test_mvp.py::test_28_session_continuity [LOG] Appended rcpt_661368bb | Log Head: 97ab62eb9811...
+[LOG] Appended rcpt_64730657 | Log Head: 505faab76e5a...
+[LOG] Appended rcpt_b7343624 | Log Head: ebd9f58f7947...
+PASSED
+
+=============================== warnings summary ===============================
+cc/tests/test_mvp.py::test_full_cycle_success
+cc/tests/test_mvp.py::test_verify_failure
+cc/tests/test_mvp.py::test_deterministic_replay
+cc/tests/test_mvp.py::test_capsule_export
+cc/tests/test_mvp.py::test_capsule_export_import_roundtrip
+cc/tests/test_mvp.py::test_capsule_import_rejects_bad_sig
+cc/tests/test_mvp.py::test_corrupted_replay
+  /home/burdens/compatible/cc/runtime.py:41: RuntimeWarning: Relative db_path 'test_memory.db' detected. Recommended: '/home/burdens/.compatible/companion.db'
+    warnings.warn(f"Relative db_path '{db_path}' detected. Recommended: '{default_db}'", RuntimeWarning)
+
+cc/tests/test_mvp.py::test_full_cycle_success
+cc/tests/test_mvp.py::test_verify_failure
+cc/tests/test_mvp.py::test_deterministic_replay
+cc/tests/test_mvp.py::test_capsule_export
+cc/tests/test_mvp.py::test_capsule_export_import_roundtrip
+cc/tests/test_mvp.py::test_capsule_import_rejects_bad_sig
+cc/tests/test_mvp.py::test_corrupted_replay
+  /home/burdens/compatible/cc/runtime.py:43: RuntimeWarning: Relative log_path 'test_receipts.jsonl' detected. Recommended: '/home/burdens/.compatible/receipts.jsonl'
+    warnings.warn(f"Relative log_path '{log_path}' detected. Recommended: '{default_log}'", RuntimeWarning)
+
+cc/tests/test_mvp.py::test_deterministic_replay
+  /home/burdens/compatible/cc/runtime.py:41: RuntimeWarning: Relative db_path 'replay_memory.db' detected. Recommended: '/home/burdens/.compatible/companion.db'
+    warnings.warn(f"Relative db_path '{db_path}' detected. Recommended: '{default_db}'", RuntimeWarning)
+
+cc/tests/test_mvp.py::test_capsule_export_import_roundtrip
+cc/tests/test_mvp.py::test_capsule_import_rejects_bad_sig
+  /home/burdens/compatible/cc/runtime.py:41: RuntimeWarning: Relative db_path 'test_memory2.db' detected. Recommended: '/home/burdens/.compatible/companion.db'
+    warnings.warn(f"Relative db_path '{db_path}' detected. Recommended: '{default_db}'", RuntimeWarning)
+
+cc/tests/test_mvp.py::test_capsule_export_import_roundtrip
+cc/tests/test_mvp.py::test_capsule_import_rejects_bad_sig
+  /home/burdens/compatible/cc/runtime.py:43: RuntimeWarning: Relative log_path 'test_receipts2.jsonl' detected. Recommended: '/home/burdens/.compatible/receipts.jsonl'
+    warnings.warn(f"Relative log_path '{log_path}' detected. Recommended: '{default_log}'", RuntimeWarning)
+
+cc/tests/test_mvp.py::test_conflict_keep_local
+  /home/burdens/compatible/cc/runtime.py:41: RuntimeWarning: Relative db_path 'local.db' detected. Recommended: '/home/burdens/.compatible/companion.db'
+    warnings.warn(f"Relative db_path '{db_path}' detected. Recommended: '{default_db}'", RuntimeWarning)
+
+cc/tests/test_mvp.py::test_conflict_keep_local
+  /home/burdens/compatible/cc/runtime.py:43: RuntimeWarning: Relative log_path 'local.jsonl' detected. Recommended: '/home/burdens/.compatible/receipts.jsonl'
+    warnings.warn(f"Relative log_path '{log_path}' detected. Recommended: '{default_log}'", RuntimeWarning)
+
+cc/tests/test_mvp.py::test_conflict_keep_local
+  /home/burdens/compatible/cc/runtime.py:41: RuntimeWarning: Relative db_path 'remote.db' detected. Recommended: '/home/burdens/.compatible/companion.db'
+    warnings.warn(f"Relative db_path '{db_path}' detected. Recommended: '{default_db}'", RuntimeWarning)
+
+cc/tests/test_mvp.py::test_conflict_keep_local
+  /home/burdens/compatible/cc/runtime.py:43: RuntimeWarning: Relative log_path 'remote.jsonl' detected. Recommended: '/home/burdens/.compatible/receipts.jsonl'
+    warnings.warn(f"Relative log_path '{log_path}' detected. Recommended: '{default_log}'", RuntimeWarning)
+
+cc/tests/test_mvp.py::test_corrupted_replay
+  /home/burdens/compatible/cc/runtime.py:41: RuntimeWarning: Relative db_path 'corrupt_replay.db' detected. Recommended: '/home/burdens/.compatible/companion.db'
+    warnings.warn(f"Relative db_path '{db_path}' detected. Recommended: '{default_db}'", RuntimeWarning)
+
+cc/tests/test_mvp.py::test_corrupted_replay
+  /home/burdens/compatible/cc/runtime.py:43: RuntimeWarning: Relative log_path 'corrupt_replay.jsonl' detected. Recommended: '/home/burdens/.compatible/receipts.jsonl'
+    warnings.warn(f"Relative log_path '{log_path}' detected. Recommended: '{default_log}'", RuntimeWarning)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================= 28 passed, 25 warnings in 1.47s ========================
+(base) burdens@pop-os:~/compatible$ python3 stress_harness.py
+
+────────────────────────────────────────────────────────────
+1 · ZW Block Canonicalization
+  ✓ PASS  ZW canonical_bytes: deterministic SHA3-256, unique per content
+  ✓ PASS  ZW canonical_bytes: trailing space in body_line normalised out (per spec)
+  ✓ PASS  ZW canonical_bytes: different meta values produce different hash
+
+────────────────────────────────────────────────────────────
+2 · State Machine — Full Cycle COMMIT
+  ✓ PASS  Full cycle COMMIT promotes unit to committed storage
+
+────────────────────────────────────────────────────────────
+3 · Verify Failure — Staged Writes Discarded
+  ✓ PASS  VERIFY FAIL (canon): staged writes discarded, original intact
+
+────────────────────────────────────────────────────────────
+4 · Deterministic Replay
+  ✓ PASS  Deterministic replay: fresh runtime reaches same state_hash
+  → Injecting: single-byte corruption in receipt log
+  ✓ CORRUPT_CAUGHT  Receipt log: single-byte corruption detected on replay
+
+────────────────────────────────────────────────────────────
+5 · Ed25519 Signing
+  ✓ PASS  generate_keypair(): returns (sk_b64, vk_b64)
+  ✓ PASS  KeyManager.sign: deterministic within session
+  → Injecting: payload tampered after signing
+  ✓ CORRUPT_CAUGHT  Ed25519: tampered payload rejected by verify_payload
+
+────────────────────────────────────────────────────────────
+6 · KeyManager: Session-Resident + Zero on Close
+  ✓ PASS  KeyManager: sign() raises RuntimeError after close() (key zeroed)
+
+────────────────────────────────────────────────────────────
+7 · TTL: Expired Unit Invisible
+  ✓ PASS  TTL: past ttl_expires_at → invisible to mem_find
+  → Verifying: expired unit tombstoned in DB (provenance preserved)
+  ✓ PASS  TTL: expired unit tombstoned in DB (provenance preserved)
+
+────────────────────────────────────────────────────────────
+8 · Canon Immutability
+  ✓ PASS  Canon immutability: second write blocked, original preserved
+
+────────────────────────────────────────────────────────────
+9 · AST Whitelist — Five Injection Vectors
+  ✓ CORRUPT_CAUGHT  AST blocks: __class__.__mro__
+  ✓ CORRUPT_CAUGHT  AST blocks: __import__ call
+  ✓ CORRUPT_CAUGHT  AST blocks: list comprehension
+  ✓ CORRUPT_CAUGHT  AST blocks: attribute chain on var
+  ✓ PASS  AST safe predicate evaluates correctly: "scope == 'core'"
+
+────────────────────────────────────────────────────────────
+10 · Tool Gateway: Allowlist Enforcement
+  ✓ CORRUPT_CAUGHT  Tool gateway: disallowed host blocked before network I/O
+
+────────────────────────────────────────────────────────────
+11 · Verifier: Independent of Gateway
+  ✓ PASS  Verifier: unauthorized call caught even when gateway bypassed
+  → Verifying: staged unit discarded atomically on FAIL
+  ✓ PASS  Verifier FAIL: staged unit writes atomically discarded
+
+────────────────────────────────────────────────────────────
+12 · Capsule Export/Import Roundtrip
+  ✓ PASS  Capsule roundtrip: unit survives export → import (signed)
+  → Injecting: single-character tamper in signed capsule signature
+  ✓ CORRUPT_CAUGHT  Capsule import: tampered signature rejected
+
+────────────────────────────────────────────────────────────
+13 · Conflict Resolution: keep_local
+  ✓ PASS  Conflict keep_local: local unit body preserved after import
+
+────────────────────────────────────────────────────────────
+14 · MCP Adapter: mem_find and mem_store
+  ✓ PASS  MCP adapter: mem_find returns units, mem_store commits via full cycle
+
+────────────────────────────────────────────────────────────
+15 · Profile Write Auditable via Provenance
+  ✓ PASS  Style write recorded in provenance (persona drift auditable)
+
+────────────────────────────────────────────────────────────
+FINAL REPORT
+
+  Total checks  : 27
+  Passed         : 27
+
+  All checks passed. Foundation is solid.
+
+(base) burdens@pop-os:~/compatible$ python3 -m pytest cc/tests/test_mvp.py -v -s 2>&1 | tee docs/test_output.txt
+============================= test session starts ==============================
+platform linux -- Python 3.13.11, pytest-9.0.2, pluggy-1.5.0 -- /home/burdens/miniconda3/bin/python3
+cachedir: .pytest_cache
+rootdir: /home/burdens/compatible
+plugins: cov-7.0.0, asyncio-1.3.0, anyio-4.12.1
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 30 items
+
+cc/tests/test_mvp.py::test_zw_block_canonicalization PASSED
+cc/tests/test_mvp.py::test_full_cycle_success [LOG] Appended rcpt_601f5fad | Log Head: fdfd218ef8e7...
+PASSED
+

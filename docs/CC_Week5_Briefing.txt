@@ -1,0 +1,542 @@
+﻿COMPATIBLE COMPANION
+Week 5 Briefing — AI to AI
+From: Claude (Architecture Lead)
+To: Antigravity (Implementation Lead)
+Full editorial + self-testing authority granted
+
+0. State of the Stack
+Frozen. Do not touch.
+
+Stage 1–2 (Weeks 1–4)
+17 tests green. Python 3.13 clean. 0 warnings. Deterministic state machine, receipt chain, Ed25519 identity, cross-runtime portability, TTL, canon immutability, sandboxed policy, ZW block parser, profile layer, provenance drift audit.
+
+Week 5 opens Stage 3. The substrate is real. Now it talks to the outside world — under contract.
+
+1. What Week 5 Proves
+A typed external tool call — real HTTP, real response — goes through PLAN→ACT→VERIFY→COMMIT, is logged in the receipt chain, and the system is incapable of sending data to an unauthorized host even if ACT or Verifier logic is compromised individually.
+
+This is the first week where the system has network I/O. The architecture decision that governs all of it is already settled:
+
+Layer
+Enforcement
+What it proves
+ToolGateway
+Refuses outbound call if host not in allowlist. Raises before any bytes leave the process.
+Confidentiality: no unauthorized data egress, ever.
+Verifier
+Inspects act_result.tool_receipts. FAILs if any receipt shows network_call_made=True to a host outside the allowlist.
+Integrity: no state transition that relied on unauthorized external data.
+
+These are not redundant. Gateway protects against a correct Verifier. Verifier protects against a compromised or bypassed Gateway. Defense in depth means each layer assumes the other could fail.
+
+2. New File: cc/tools.py
+One class, one exception, no external dependencies. urllib.request is stdlib. This file must be readable by someone who has never heard of Compatible Companion — the comments are part of the spec.
+
+2.1 ToolReceipt Schema
+Every tool call — successful, failed, or blocked — produces a tool_receipt dict. This is the atom of the tool audit trail.
+# tool_receipt schema (dict, not a class — stays JSON-serializable):
+{
+    'tool_name':        str,          # caller-supplied label
+    'host':             str,          # e.g. 'api.example.com'
+    'path':             str,          # e.g. '/v1/fact'
+    'method':           str,          # 'GET' | 'POST' | etc.
+    'allowed':          bool,         # host was in allowlist
+    'network_call_made': bool,        # True only if bytes left the process
+    'status_code':      int | None,   # HTTP status, or None
+    'response_body':    str | None,   # decoded response, or None
+    'ts':               str,          # ISO 8601 UTC
+    'error':            str | None,   # exception message, or None
+}
+
+# INVARIANT: network_call_made is False whenever allowed is False.
+# INVARIANT: network_call_made may be True even when error is set
+#            (call was made, but response was an error).
+# INVARIANT: network_call_made is False when status_code is None
+#            AND allowed is True (network error before response).
+2.2 ToolGateway Class
+"""
+cc/tools.py — Typed external tool gateway.
+
+Public API:
+    ToolGateway(allowlist: list[str])
+        .call(tool_name, host, path, method='GET', payload=None) -> dict
+
+    ToolGatewayError(receipt: dict)
+        Raised when a call is blocked by the allowlist.
+        .receipt contains the tool_receipt dict for logging.
+
+Design decisions:
+    - No network call is ever made to a host outside the allowlist.
+      The check happens before any socket is opened.
+    - network_call_made is set to True only after the OS has
+      initiated the connection (i.e., urllib.request.urlopen is called).
+    - The gateway does not retry. Callers handle retry logic.
+    - No caching, no session reuse. Each call is independent.
+    - Timeout is hardcoded to 10 seconds. Adjust in Stage 4 if needed.
+"""
+
+import json
+import urllib.request
+import urllib.error
+from datetime import datetime, timezone
+
+
+class ToolGatewayError(Exception):
+    """Raised when ToolGateway blocks a call due to allowlist violation."""
+    def __init__(self, receipt: dict):
+        self.receipt = receipt
+        super().__init__(receipt['error'])
+
+
+class ToolGateway:
+    """
+    Typed external tool call gateway with allowlist enforcement.
+
+    The allowlist is a set of hostnames (no scheme, no path).
+    Example: ['api.example.com', 'hooks.slack.com']
+
+    Callers receive a tool_receipt dict on success.
+    ToolGatewayError is raised (carrying a tool_receipt) on block.
+    Network errors return a tool_receipt with error set.
+    """
+
+    def __init__(self, allowlist: list[str]):
+        self._allowlist = frozenset(allowlist)
+
+    def call(
+        self,
+        tool_name: str,
+        host: str,
+        path: str,
+        method: str = 'GET',
+        payload: dict = None,
+    ) -> dict:
+        """
+        Make one external tool call.
+
+        Returns a tool_receipt dict.
+        Raises ToolGatewayError (with receipt) if host not in allowlist.
+        """
+        ts = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+
+        # ── ALLOWLIST CHECK (before any network I/O) ──────────────
+        if host not in self._allowlist:
+            receipt = {
+                'tool_name': tool_name, 'host': host, 'path': path,
+                'method': method, 'allowed': False,
+                'network_call_made': False,  # guaranteed: no bytes sent
+                'status_code': None, 'response_body': None, 'ts': ts,
+                'error': f"host '{host}' not in tool_allowlist",
+            }
+            raise ToolGatewayError(receipt)
+
+        # ── NETWORK CALL ──────────────────────────────────────────
+        url = f'https://{host}{path}'
+        body_bytes = json.dumps(payload or {}).encode() if payload else None
+        req = urllib.request.Request(
+            url, data=body_bytes, method=method,
+            headers={'Content-Type': 'application/json',
+                     'Accept': 'application/json'},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                response_body = resp.read().decode('utf-8', errors='replace')
+                status_code   = resp.status
+        except urllib.error.HTTPError as e:
+            response_body = e.read().decode('utf-8', errors='replace')
+            status_code   = e.code
+            return {
+                'tool_name': tool_name, 'host': host, 'path': path,
+                'method': method, 'allowed': True,
+                'network_call_made': True,
+                'status_code': status_code, 'response_body': response_body,
+                'ts': ts, 'error': f'HTTP {status_code}',
+            }
+        except Exception as exc:
+            return {
+                'tool_name': tool_name, 'host': host, 'path': path,
+                'method': method, 'allowed': True,
+                'network_call_made': True,   # attempt was made
+                'status_code': None, 'response_body': None,
+                'ts': ts, 'error': str(exc),
+            }
+
+        return {
+            'tool_name': tool_name, 'host': host, 'path': path,
+            'method': method, 'allowed': True,
+            'network_call_made': True,
+            'status_code': status_code, 'response_body': response_body,
+            'ts': ts, 'error': None,
+        }
+
+3. runtime.py — Verifier Extension
+One new private function. Called from the VERIFY phase, after canon immutability and before policy rules. It is unconditional — no policy override is possible.
+
+3.1 _verify_tool_receipts
+def _verify_tool_receipts(act_result: dict, allowlist: list[str]) -> str | None:
+    """
+    Verifier check: no committed state transition may rely on an
+    unauthorized external call.
+
+    A violation is: any tool_receipt where:
+        network_call_made == True
+        AND host not in allowlist
+
+    Gateway-blocked calls (network_call_made == False) are NOT violations.
+    They are documented attempts. The gateway already enforced confidentiality.
+    The Verifier enforces integrity: it refuses to COMMIT any cycle that
+    received data from an unauthorized host.
+
+    Returns error string on first violation, None if clean.
+    """
+    receipts  = act_result.get('tool_receipts', [])
+    allowed   = frozenset(allowlist)
+    for r in receipts:
+        if r.get('network_call_made') and r.get('host') not in allowed:
+            return (
+                f"verifier_tool_allowlist_violation: "
+                f"network call made to unauthorized host '{r['host']}'"
+            )
+    return None
+
+3.2 VERIFY Phase Integration
+In run_cycle(), the VERIFY phase now runs three checks in strict order. All three must pass for COMMIT:
+# VERIFY phase — in order, stop on first failure:
+
+# 1. Canon immutability (Week 3, unchanged)
+error = _verify_canon_immutability(self.staged_writes, self.conn)
+if error:
+    self._emit_receipt('FAIL', error=error)
+    self.staged_writes.clear()
+    self.state = 'IDLE'
+    return 'FAIL'
+
+# 2. Tool receipt integrity (Week 5, NEW)
+error = _verify_tool_receipts(self._last_act_result, self.tool_allowlist)
+if error:
+    self._emit_receipt('FAIL', error=error)
+    self.staged_writes.clear()
+    self.state = 'IDLE'
+    return 'FAIL'
+
+# 3. Policy rules (Week 3, unchanged)
+error = _eval_policy_rules(self.staged_writes, self.conn)
+if error:
+    self._emit_receipt('FAIL', error=error)
+    self.staged_writes.clear()
+    self.state = 'IDLE'
+    return 'FAIL'
+
+# All checks passed — proceed to COMMIT
+
+3.3 AgentRuntime Signature Change
+Add tool_allowlist parameter. Default is empty list (no external calls allowed until capsule loads a policy).
+class AgentRuntime:
+    def __init__(
+        self,
+        db_path: str,
+        log_path: str,
+        tool_allowlist: list[str] = None,   # NEW — Week 5
+    ):
+        self.tool_allowlist = list(tool_allowlist or [])
+        self._last_act_result = {}           # set by run_cycle() after ACT
+        # ... rest of existing __init__ unchanged ...
+
+    def run_cycle(self, plan, act_fn, invariants=None) -> str:
+        # ...
+        # After ACT, before VERIFY:
+        act_result = act_fn(plan)
+        self._last_act_result = act_result if isinstance(act_result, dict) else {}
+        # tool_receipts in act_result are included in the COMMIT receipt
+
+3.4 COMMIT Receipt — tool_receipts Field
+The COMMIT receipt must include all tool_receipts from the cycle. This makes the receipt chain self-auditing — you can reconstruct every external call from the log alone.
+# In _emit_receipt() for COMMIT outcome:
+receipt = {
+    'receipt_id':    ...,
+    'outcome':       'COMMIT',
+    'plan_hash':     ...,
+    'state_hash':    ...,
+    'prev_hash':     ...,
+    'ts':            ...,
+    'tool_receipts': self._last_act_result.get('tool_receipts', []),  # NEW
+}
+
+4. capsule.py — Policy Field
+One field added to the capsule schema. Already referenced in prior specs — now it becomes real.
+# Capsule policy block (add tool_allowlist field):
+{
+    'policy': {
+        'tool_allowlist': ['api.example.com', 'hooks.slack.com'],
+        # ... existing policy fields unchanged ...
+    }
+}
+
+# On capsule export: write runtime.tool_allowlist into policy.tool_allowlist
+# On capsule import: load policy.tool_allowlist into AgentRuntime constructor
+
+# If policy.tool_allowlist is absent from an imported capsule,
+# default to [] (no external calls allowed). Never fail import for a
+# missing allowlist — old capsules without this field are valid.
+
+5. The Four Tests
+Tests 18-21. All use unittest.mock.patch to mock urllib.request.urlopen — stdlib, no new deps, no real network calls in the suite.
+
+Test 18 — Allowed Tool Call Commits with Receipt
+def test_18_allowed_tool_call_commits():
+    """
+    An external call to an allowed host goes through the full cycle.
+    COMMIT receipt contains tool_receipts with network_call_made=True.
+    No FAIL. No unit writes are needed — tool_receipts alone prove the path.
+    """
+    import tempfile, os, json
+    from unittest.mock import patch, MagicMock
+    from cc.runtime import AgentRuntime
+    from cc.tools   import ToolGateway
+
+    ALLOWED_HOST = 'api.example.com'
+
+    # Mock HTTP response: 200, body='{}' 
+    mock_resp = MagicMock()
+    mock_resp.status = 200
+    mock_resp.read.return_value = b'{"result": "ok"}'
+    mock_resp.__enter__ = lambda s: s
+    mock_resp.__exit__  = MagicMock(return_value=False)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path  = os.path.join(tmp, 'test18.db')
+        log_path = os.path.join(tmp, 'receipts.jsonl')
+        rt = AgentRuntime(db_path=db_path, log_path=log_path,
+                          tool_allowlist=[ALLOWED_HOST])
+        gw = ToolGateway([ALLOWED_HOST])
+
+        with patch('urllib.request.urlopen', return_value=mock_resp):
+            def act_fn(plan):
+                receipt = gw.call('get_fact', ALLOWED_HOST, '/v1/fact')
+                return {'tool_receipts': [receipt]}
+
+            result = rt.run_cycle(
+                plan={'action': 'tool_call', 'tool': 'get_fact'},
+                act_fn=act_fn,
+                invariants=[],
+            )
+
+        assert result == 'COMMIT', f'expected COMMIT, got {result}'
+
+        # COMMIT receipt must contain tool_receipts
+        receipts = [json.loads(l) for l in open(log_path)]
+        commits  = [r for r in receipts if r['outcome'] == 'COMMIT']
+        assert len(commits) == 1
+        tr = commits[0].get('tool_receipts', [])
+        assert len(tr) == 1, 'COMMIT receipt must have tool_receipts'
+        assert tr[0]['host']              == ALLOWED_HOST
+        assert tr[0]['allowed']           is True
+        assert tr[0]['network_call_made'] is True
+        assert tr[0]['status_code']       == 200
+
+Test 19 — Gateway Blocks Disallowed Host, Cycle Commits with Blocked Receipt
+def test_19_gateway_blocks_disallowed_host():
+    """
+    act_fn attempts a call to an unauthorized host.
+    ToolGateway raises ToolGatewayError before any bytes leave the process.
+    act_fn catches the error and returns the blocked receipt.
+    Verifier: network_call_made=False — no integrity violation — PASS.
+    Cycle COMMITs. Blocked attempt is documented in the receipt chain.
+    """
+    import tempfile, os, json
+    from cc.runtime import AgentRuntime
+    from cc.tools   import ToolGateway, ToolGatewayError
+
+    ALLOWED_HOST   = 'api.example.com'
+    DISALLOWED_HOST = 'evil.example.com'
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path  = os.path.join(tmp, 'test19.db')
+        log_path = os.path.join(tmp, 'receipts.jsonl')
+        rt = AgentRuntime(db_path=db_path, log_path=log_path,
+                          tool_allowlist=[ALLOWED_HOST])
+        gw = ToolGateway([ALLOWED_HOST])
+
+        def act_fn(plan):
+            try:
+                gw.call('exfil', DISALLOWED_HOST, '/data')
+            except ToolGatewayError as e:
+                # Gateway blocked — document and return
+                return {'tool_receipts': [e.receipt]}
+            return {'tool_receipts': []}
+
+        result = rt.run_cycle(
+            plan={'action': 'tool_call', 'tool': 'exfil'},
+            act_fn=act_fn,
+            invariants=[],
+        )
+
+        # Gateway blocked the call — no network I/O occurred
+        # Verifier sees network_call_made=False — no integrity violation
+        # Cycle COMMITs with the blocked receipt documented
+        assert result == 'COMMIT', \
+            f'blocked call (no data sent) must still COMMIT, got {result}'
+
+        receipts = [json.loads(l) for l in open(log_path)]
+        commits  = [r for r in receipts if r['outcome'] == 'COMMIT']
+        assert len(commits) == 1
+        tr = commits[0].get('tool_receipts', [])
+        assert len(tr) == 1
+        assert tr[0]['host']               == DISALLOWED_HOST
+        assert tr[0]['allowed']            is False
+        assert tr[0]['network_call_made']  is False,  \
+            'gateway must not make a network call to a blocked host'
+        assert tr[0]['error'] is not None
+
+Test 20 — Verifier Catches Unauthorized Successful Call
+def test_20_verifier_catches_unauthorized_call():
+    """
+    A test double bypasses the gateway and returns a tool_receipt
+    showing network_call_made=True to a host not in the allowlist.
+    No real network call is made in this test.
+    Verifier must FAIL. No COMMIT. No unit writes.
+    This proves Verifier is an independent check, not trusting the gateway.
+    """
+    import tempfile, os, json
+    from cc.runtime import AgentRuntime
+
+    ALLOWED_HOST    = 'api.example.com'
+    DISALLOWED_HOST = 'evil.example.com'
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path  = os.path.join(tmp, 'test20.db')
+        log_path = os.path.join(tmp, 'receipts.jsonl')
+        rt = AgentRuntime(db_path=db_path, log_path=log_path,
+                          tool_allowlist=[ALLOWED_HOST])
+
+        def act_fn(plan):
+            # Test double: simulates a gateway bypass.
+            # network_call_made=True to a disallowed host.
+            fake_receipt = {
+                'tool_name': 'exfil', 'host': DISALLOWED_HOST,
+                'path': '/data', 'method': 'POST',
+                'allowed': True,           # gateway claims it was allowed
+                'network_call_made': True, # data was 'sent'
+                'status_code': 200, 'response_body': 'stolen data',
+                'ts': '2026-01-01T00:00:00',
+                'error': None,
+            }
+            return {'tool_receipts': [fake_receipt]}
+
+        result = rt.run_cycle(
+            plan={'action': 'tool_call', 'tool': 'exfil'},
+            act_fn=act_fn,
+            invariants=[],
+        )
+
+        assert result == 'FAIL', f'Verifier must catch unauthorized call, got {result}'
+
+        receipts = [json.loads(l) for l in open(log_path)]
+        fails    = [r for r in receipts if r['outcome'] == 'FAIL']
+        assert len(fails) == 1
+        assert 'verifier_tool_allowlist_violation' in fails[0].get('error', ''), \
+            'FAIL receipt must name the violation type'
+        assert DISALLOWED_HOST in fails[0].get('error', ''), \
+            'FAIL receipt must name the offending host'
+
+Test 21 — Staged Unit Writes Discarded on Tool Allowlist Violation
+def test_21_staged_writes_discarded_on_tool_violation():
+    """
+    Same as Test 20, but ACT also stages a unit write in the same cycle.
+    Verifier FAILs due to unauthorized call.
+    Staged write must be discarded — not committed to storage.
+    Proves rollback works for tool violations.
+    """
+    import tempfile, os, json
+    from cc.runtime import AgentRuntime
+
+    ALLOWED_HOST    = 'api.example.com'
+    DISALLOWED_HOST = 'evil.example.com'
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path  = os.path.join(tmp, 'test21.db')
+        log_path = os.path.join(tmp, 'receipts.jsonl')
+        rt = AgentRuntime(db_path=db_path, log_path=log_path,
+                          tool_allowlist=[ALLOWED_HOST])
+
+        def act_fn(plan):
+            fake_receipt = {
+                'tool_name': 'exfil', 'host': DISALLOWED_HOST,
+                'path': '/data', 'method': 'POST',
+                'allowed': True, 'network_call_made': True,
+                'status_code': 200, 'response_body': 'stolen',
+                'ts': '2026-01-01T00:00:00', 'error': None,
+            }
+            # Also stage a unit write in the same cycle
+            return {
+                'tool_receipts': [fake_receipt],
+                'action': 'mem_store',
+                'unit_id': 'u_should_not_commit',
+                'scope': 'style',
+                'tags': ['test'],
+                'body': {'summary': 'must not appear in storage'},
+            }
+
+        result = rt.run_cycle(
+            plan={'action': 'mem_store', 'unit_id': 'u_should_not_commit',
+                  'scope': 'style', 'tags': ['test'],
+                  'body': {'summary': 'must not appear in storage'}},
+            act_fn=act_fn,
+            invariants=[],
+        )
+
+        assert result == 'FAIL'
+
+        # Unit must NOT be in committed storage
+        units = rt.mem_store.mem_find(scope='style')
+        assert all(u['unit_id'] != 'u_should_not_commit' for u in units), \
+            'staged write must be discarded when Verifier FAILs'
+
+        # Confirm FAIL receipt, not COMMIT
+        receipts = [json.loads(l) for l in open(log_path)]
+        assert not any(r['outcome'] == 'COMMIT' for r in receipts)
+        assert any('verifier_tool_allowlist_violation' in r.get('error', '')
+                   for r in receipts if r['outcome'] == 'FAIL')
+
+6. Execution Order
+Do not touch any existing file until Step 1 passes. If Step 1 is not 17 green, stop.
+
+Step
+Action
+1
+Run existing suite. 17 passed. If anything is red, stop. Do not proceed.
+2
+Write cc/tools.py (ToolGateway + ToolGatewayError). No tests yet. Read it back — a stranger should understand the format from the comments alone.
+3
+Write Test 18. Run alone. Will fail (runtime doesn't know about tool_receipts yet). Implement the act_result storage in run_cycle() and the tool_receipts field in COMMIT receipt. Green.
+4
+Add _verify_tool_receipts to runtime.py. Wire into VERIFY phase (position: after canon, before policy). Write Test 19. Green.
+5
+Write Test 20. Green. If Test 19 also FAILs now (it shouldn't — network_call_made=False should not trigger the Verifier), debug the condition before continuing.
+6
+Write Test 21. Green.
+7
+Add tool_allowlist to capsule export/import. No new test — existing Test 8 (roundtrip) implicitly covers capsule fields.
+8
+Run full suite: python3 -m pytest cc/tests/test_mvp.py -v. Must show 21 passed, 0 warnings.
+
+7. What Week 5 Does NOT Touch
+✗ The state machine phases (PLAN→ACT→VERIFY→COMMIT) — structure frozen
+✗ The receipt chain hashing algorithm — frozen
+✗ identity.py — frozen
+✗ zw_block.py — frozen
+✗ canon immutability rule — frozen
+✗ TTL enforcement — frozen
+✗ Sandboxed policy rules — frozen
+✗ MCP adapter — Week 6
+✗ A2A — Week 7
+✗ Multi-user, multi-session — Week 7
+✗ Real TTS, Godot, or any downstream consumer — Stage 4
+✗ No new dependencies. stdlib + PyNaCl only.
+
+8. Acceptance Criteria
+python3 -m pytest cc/tests/test_mvp.py   →   21 passed.   That is the only verdict.
+
+When 21 are green, Stage 3 Week 5 is done. Next: Week 6 — MCP adapter. The runtime becomes a server. Any MCP-compatible model can call mem_find, mem_store, run_cycle, and capsule_export as tools. We scope that together when the green line holds.
+
+The substrate is real. Now it has a surface. Ship the green line.

@@ -1,0 +1,444 @@
+﻿COMPATIBLE COMPANION
+Week 8 Briefing — AI to AI
+From: Claude (Architecture Lead)  ·  To: Antigravity (Implementation Lead)
+Full editorial + self-testing authority granted
+
+0. State of the Stack — Frozen
+All of the following is locked. Do not refactor. Do not touch. Build above it.
+
+✓
+28 pytest tests green
+0 failures, 0 warnings on new tests — relative-path warnings on legacy tests only
+✓
+27/27 stress harness
+0 deferred, 5 live corruption injections all caught
+✓
+State machine
+PLAN→ACT→VERIFY→COMMIT, chained SHA3-256 receipts, deterministic replay
+✓
+Ed25519 identity
+KeyManager, session-resident key, zero on close, verify_payload tamper rejection
+✓
+Signed capsule
+export_capsule signs, import_capsule verifies, tamper raises before any DB write
+✓
+TTL tombstone
+Expired units invisible to mem_find, physically present in DB, provenance intact
+✓
+Canon immutability
+Verifier blocks second write unconditionally, original preserved, FAIL receipt emitted
+✓
+AST policy whitelist
+eval replaced, 4 injection vectors blocked, safe predicates still evaluate
+✓
+Defense-in-depth tools
+Gateway + Verifier both enforce allowlist independently
+✓
+MCP adapter
+build_server → (server, handlers), all mutation through run_cycle
+✓
+Session continuity
+State accumulates across AgentRuntime instantiations on same DB — proven in Test 28
+
+
+1. Week 8 Scope — Two Proofs
+Week 8 makes the runtime scalable and network-accessible. Two items. Each has exactly one proof test. Both are independently implementable — no dependency between them. Total: 30 pytest tests green.
+
+#
+Proof
+Acceptance criterion
+Files
+P1
+Snapshot checkpointing
+compact_log(log_path, capsule_path) writes a capsule snapshot. A fresh runtime that calls replay_from_snapshot(capsule_path, log_path) reaches the same state_hash as full replay from genesis. Startup skips all entries before the snapshot.
+runtime.py + new compact.py
+P2
+TCP transport
+A CC runtime starts a TCP MCP server on localhost:7700. A second process connects, calls mem_find via TCP, and receives correct results. Connection is closed cleanly. No shared memory — two separate Python processes.
+new server.py
+
+
+2. P1 — Snapshot Checkpointing
+Replay currently walks the full JSONL log from genesis. At scale that is O(N) startup time. Snapshots make it O(recent) — replay only from the last checkpoint forward. The full log remains for audit. Nothing is deleted.
+
+2.1 New File: cc/compact.py
+Create this file. It has two public functions only.
+
+# cc/compact.py
+"""
+Snapshot checkpointing for Compatible Companion.
+
+compact_log(log_path, capsule_path, key_manager=None)
+    Reads the current receipt log. Exports a capsule snapshot to capsule_path.
+    The capsule becomes the official checkpoint. The log is NOT modified.
+    If key_manager provided, capsule is signed.
+
+replay_from_snapshot(rt, capsule_path, log_path, key_manager=None)
+    Imports the snapshot into rt (AgentRuntime).
+    Then replays only log entries AFTER the snapshot's log_head.
+    Result: same state as full replay from genesis, but O(recent) cost.
+"""
+import json
+from cc.capsule import export_capsule, import_capsule
+
+def compact_log(db_path: str, capsule_path: str, key_manager=None) -> str:
+    """
+    Write a capsule snapshot from db_path to capsule_path.
+    Returns the log_head hash embedded in the capsule.
+    """
+    export_capsule(db_path, capsule_path, key_manager=key_manager)
+    with open(capsule_path) as f:
+        caps = json.load(f)
+    return caps.get('log_head', '')   # the receipt hash at snapshot time
+
+def replay_from_snapshot(rt, capsule_path: str, log_path: str,
+                          key_manager=None) -> None:
+    """
+    1. Import snapshot into rt (restores committed state).
+    2. Read log_path. Skip all entries with receipt_id <= snapshot log_head.
+    3. Replay only the tail entries via rt.apply_receipt(receipt).
+    """
+    import_capsule(capsule_path, rt.db_path, key_manager=key_manager)
+
+    with open(capsule_path) as f:
+        caps = json.load(f)
+    checkpoint_head = caps.get('log_head', '')
+
+    with open(log_path) as f:
+        entries = [json.loads(l) for l in f if l.strip()]
+
+    # Find the first entry AFTER the checkpoint
+    past_checkpoint = False
+    for entry in entries:
+        if entry.get('receipt_id') == checkpoint_head:
+            past_checkpoint = True
+            continue
+        if past_checkpoint:
+            rt.apply_receipt(entry)   # replay tail only
+
+IMPORTANT: export_capsule must embed the current log_head (the most recent committed receipt_id) in the capsule JSON so replay_from_snapshot knows where to cut the log. If log_head is not already in the capsule schema, add it now. This is the only schema change in Week 8.
+
+2.2 apply_receipt on AgentRuntime
+replay_from_snapshot calls rt.apply_receipt(receipt). This method must exist. It is the atomic unit of replay — given a committed receipt dict, re-apply its writes to the DB without going through PLAN→ACT→VERIFY. This is replay-only, not a new write path.
+
+# In cc/runtime.py — add this method to AgentRuntime
+def apply_receipt(self, receipt: dict) -> None:
+    """
+    Replay a committed receipt directly into storage.
+    Called only during log replay. Never called from production write paths.
+    Raises ValueError if receipt outcome is not COMMIT.
+    """
+    if receipt.get('outcome') != 'COMMIT':
+        return   # skip FAIL receipts — they left no state
+
+    # Re-apply staged writes from the receipt
+    for unit in receipt.get('staged_units', []):
+        self.memory.mem_store(
+            unit_id=unit['unit_id'],
+            scope=unit['scope'],
+            body=unit['body'],
+            tags=unit.get('tags', []),
+            ttl_expires_at=unit.get('ttl_expires_at'),
+        )
+
+    # Update state hash
+    self.last_state_hash = receipt.get('state_hash', self.last_state_hash)
+
+NOTE: apply_receipt requires that COMMIT receipts contain staged_units in the JSON. Check your receipt schema now. If staged_units is not serialised into COMMIT receipts, add it. This is required for both snapshot replay and full replay correctness.
+
+2.3 Acceptance Test (Test 29)
+def test_29_snapshot_checkpoint_replay():
+    """
+    compact_log + replay_from_snapshot reaches the same state_hash
+    as full replay from genesis, but skips pre-snapshot entries.
+    """
+    import tempfile, os
+    from cc.runtime import AgentRuntime
+    from cc.compact import compact_log, replay_from_snapshot
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db   = os.path.join(tmp, 'main.db')
+        log  = os.path.join(tmp, 'receipts.jsonl')
+        snap = os.path.join(tmp, 'snapshot.capsule.json')
+
+        # Write three units
+        rt = AgentRuntime(db_path=db, log_path=log)
+        for i in range(3):
+            rt.run_cycle(
+                plan={'action':'mem_store', f'unit_id': f'u{i}',
+                      'scope':'core', 'tags':[], 'body':{'summary':f'unit {i}'}},
+                act_fn=lambda p: {**p}, invariants=[],
+            )
+        full_hash = rt.last_state_hash
+
+        # Take snapshot after 3 units
+        compact_log(db, snap)
+
+        # Write one more unit AFTER snapshot
+        rt.run_cycle(
+            plan={'action':'mem_store','unit_id':'u3','scope':'core',
+                  'tags':[],'body':{'summary':'post-snapshot'}},
+            act_fn=lambda p: {**p}, invariants=[],
+        )
+        final_hash = rt.last_state_hash
+
+        # Full replay from genesis
+        rt_full = AgentRuntime(db_path=os.path.join(tmp,'full.db'),
+                               log_path=os.path.join(tmp,'full.jsonl'))
+        rt_full.replay_log(log)
+        assert rt_full.last_state_hash == final_hash, 'full replay must match'
+
+        # Snapshot replay — must reach same final hash
+        rt_snap = AgentRuntime(db_path=os.path.join(tmp,'snap.db'),
+                               log_path=os.path.join(tmp,'snap.jsonl'))
+        replay_from_snapshot(rt_snap, snap, log)
+        assert rt_snap.last_state_hash == final_hash, \
+            f'snapshot replay must match full replay: {rt_snap.last_state_hash} != {final_hash}'
+
+        # Snapshot runtime must have all 4 units
+        all_units = rt_snap.memory.mem_find(scope='core')
+        ids = [u.get('unit_id') for u in all_units]
+        assert all(f'u{i}' in ids for i in range(4)), f'all units must be present: {ids}'
+
+
+3. P2 — TCP Transport
+The MCP adapter runs over stdio. Week 8 adds a TCP listener so a second process can connect to a live CC runtime over the network. This is the first step toward CC being a daemon — always-on, addressable, multi-client.
+
+3.1 New File: cc/server.py
+# cc/server.py
+"""
+TCP transport layer for Compatible Companion MCP server.
+
+start_tcp_server(rt, key_manager, host='127.0.0.1', port=7700)
+    Starts an asyncio TCP server wrapping the MCP handlers.
+    Each connection gets a framed JSON request/response protocol.
+    Server runs until cancelled.
+
+Protocol (newline-delimited JSON):
+  Request:  {"tool": "mem_find", "args": {"scope": "core"}}
+  Response: {"ok": true, "result": [...]}
+  Error:    {"ok": false, "error": "..."}
+"""
+import asyncio, json
+from cc.mcp_adapter import build_server
+
+async def _handle_client(rt, handlers, reader, writer):
+    addr = writer.get_extra_info('peername')
+    try:
+        while True:
+            line = await reader.readline()
+            if not line:
+                break
+            try:
+                req = json.loads(line.decode())
+                tool = req.get('tool')
+                args = req.get('args', {})
+                if tool not in handlers:
+                    raise ValueError(f'unknown tool: {tool}')
+                result = await handlers[tool](tool, args)
+                payload = json.dumps({'ok': True,
+                    'result': json.loads(result[0].text)}) + '\n'
+            except Exception as e:
+                payload = json.dumps({'ok': False, 'error': str(e)}) + '\n'
+            writer.write(payload.encode())
+            await writer.drain()
+    finally:
+        writer.close()
+        await writer.wait_closed()
+
+async def start_tcp_server(rt, key_manager,
+                            host='127.0.0.1', port=7700):
+    _, handlers = build_server(rt, key_manager)
+    server = await asyncio.start_server(
+        lambda r, w: _handle_client(rt, handlers, r, w),
+        host, port
+    )
+    async with server:
+        await server.serve_forever()
+
+3.2 Acceptance Test (Test 30)
+def test_30_tcp_transport_mem_find():
+    """
+    Two-process proof: server in background task, client connects via TCP.
+    mem_find via TCP returns correct results. No shared memory.
+    """
+    import tempfile, os, asyncio, json
+    from cc.runtime import AgentRuntime
+    from cc.identity import generate_keypair, KeyManager
+    from cc.server import start_tcp_server
+    import shutil
+
+    async def run():
+        with tempfile.TemporaryDirectory() as tmp:
+            sk, vk = generate_keypair()
+            kp = os.path.join(tmp, 'id.key')
+            shutil.copy2('cc_identity.key', kp)
+            km = KeyManager(kp)
+
+            db  = os.path.join(tmp, 'server.db')
+            log = os.path.join(tmp, 'server.jsonl')
+            rt  = AgentRuntime(db_path=db, log_path=log)
+            rt.run_cycle(
+                plan={'action':'mem_store','unit_id':'tcp_unit',
+                      'scope':'core','tags':[],'body':{'summary':'tcp test'}},
+                act_fn=lambda p: {**p}, invariants=[],
+            )
+
+            # Start server in background
+            server_task = asyncio.create_task(
+                start_tcp_server(rt, km, host='127.0.0.1', port=7700)
+            )
+            await asyncio.sleep(0.1)   # let server bind
+
+            # Client connects via TCP
+            reader, writer = await asyncio.open_connection('127.0.0.1', 7700)
+            req = json.dumps({'tool':'mem_find','args':{'scope':'core'}}) + '\n'
+            writer.write(req.encode())
+            await writer.drain()
+
+            line = await reader.readline()
+            resp = json.loads(line.decode())
+
+            writer.close()
+            await writer.wait_closed()
+            server_task.cancel()
+            try: await server_task
+            except asyncio.CancelledError: pass
+
+            assert resp['ok'] is True, f'TCP mem_find must succeed: {resp}'
+            ids = [u.get('unit_id') for u in resp['result']]
+            assert 'tcp_unit' in ids, f'tcp_unit must be in results: {ids}'
+
+    asyncio.run(run())
+
+
+4. Stress Harness — Two New Sections
+Add these two sections to stress_harness.py after section 15. Target: 29/29.
+
+Section 16 — Snapshot Checkpointing
+section("16 · Snapshot Checkpointing")
+
+code = textwrap.dedent('''
+import tempfile, os
+from cc.runtime import AgentRuntime
+from cc.compact import compact_log, replay_from_snapshot
+
+with tempfile.TemporaryDirectory() as tmp:
+    db  = os.path.join(tmp,'main.db')
+    log = os.path.join(tmp,'receipts.jsonl')
+    snap = os.path.join(tmp,'snap.json')
+    rt = AgentRuntime(db_path=db, log_path=log)
+    for i in range(3):
+        rt.run_cycle(
+            plan={'action':'mem_store','unit_id':f'u{i}','scope':'core',
+                  'tags':[],'body':{'summary':f'unit {i}'}},
+            act_fn=lambda p: {**p}, invariants=[])
+    compact_log(db, snap)
+    rt.run_cycle(
+        plan={'action':'mem_store','unit_id':'u3','scope':'core',
+              'tags':[],'body':{'summary':'post'}},
+        act_fn=lambda p: {**p}, invariants=[])
+    final = rt.last_state_hash
+    rt2 = AgentRuntime(db_path=os.path.join(tmp,'s.db'),
+                        log_path=os.path.join(tmp,'s.jsonl'))
+    replay_from_snapshot(rt2, snap, log)
+    assert rt2.last_state_hash == final, f'hash mismatch: {rt2.last_state_hash}'
+    units = rt2.memory.mem_find(scope='core')
+    assert len(units) == 4, f'expected 4 units: {len(units)}'
+    print('OK')
+''')
+ok_, out = run_isolated(code)
+record("Snapshot replay reaches same state_hash as full replay", ok_ and "OK" in out, out)
+
+Section 17 — TCP Transport
+section("17 · TCP Transport")
+
+code = KEY_SETUP + textwrap.dedent('''
+import tempfile, os, asyncio, json
+from cc.runtime import AgentRuntime
+from cc.server import start_tcp_server
+
+async def run():
+    with tempfile.TemporaryDirectory() as tmp:
+        km, vk_b64, kp = _make_key(tmp)
+        rt = AgentRuntime(db_path=os.path.join(tmp,'s.db'),
+                          log_path=os.path.join(tmp,'r.jsonl'))
+        rt.run_cycle(
+            plan={'action':'mem_store','unit_id':'tcp_u','scope':'core',
+                  'tags':[],'body':{'summary':'tcp'}},
+            act_fn=lambda p: {**p}, invariants=[])
+        task = asyncio.create_task(
+            start_tcp_server(rt, km, host='127.0.0.1', port=7701))
+        await asyncio.sleep(0.1)
+        r, w = await asyncio.open_connection('127.0.0.1', 7701)
+        w.write((json.dumps({'tool':'mem_find','args':{'scope':'core'}})+'\\n').encode())
+        await w.drain()
+        line = await r.readline()
+        resp = json.loads(line.decode())
+        w.close()
+        await w.wait_closed()
+        task.cancel()
+        try: await task
+        except asyncio.CancelledError: pass
+        assert resp['ok'] is True
+        ids = [u.get('unit_id') for u in resp['result']]
+        assert 'tcp_u' in ids
+        print('OK')
+asyncio.run(run())
+''')
+ok_, out = run_isolated(code)
+record("TCP transport: client connects, mem_find returns correct results", ok_ and "OK" in out, out)
+
+
+5. Execution Order
+Do not skip steps. Each step must be green before the next.
+
+1
+Run existing suite — python3 -m pytest cc/tests/test_mvp.py -v — must show 28 passed before touching anything.
+2
+Verify COMMIT receipts contain staged_units in their JSON. If not, add serialisation now. Run suite again — 28 passed.
+3
+Verify export_capsule embeds log_head in the capsule JSON. Add it if missing. This is the only capsule schema change.
+4
+Add apply_receipt(receipt) to AgentRuntime in runtime.py.
+5
+Create cc/compact.py with compact_log and replay_from_snapshot.
+6
+Write Test 29. Run alone. Confirm pass. Run full suite — 29 passed.
+7
+Create cc/server.py with start_tcp_server.
+8
+Write Test 30. Run alone. Confirm pass. Run full suite — 30 passed, 0 warnings.
+9
+Add sections 16 and 17 to stress_harness.py. Run — 29/29.
+10
+Final verification: pytest 30 passed · stress harness 29/29. Both clean. Week 8 closed.
+
+
+6. What Week 8 Does NOT Touch
+✗  State machine phases — frozen ✗  Receipt schema (except adding log_head to capsule and staged_units to COMMIT receipt if missing) ✗  KeyManager / identity.py — frozen ✗  AST policy evaluator — frozen ✗  ToolGateway / Verifier tool logic — frozen ✗  MCP adapter interface — frozen ✗  TLS / authentication on TCP — Week 9 ✗  Multi-client session isolation — Week 9 ✗  Key rotation — not in scope ✗  No new dependencies (asyncio is stdlib)
+
+
+7. Week 9 Preview (Do Not Build Yet)
+Week 9 is where Compatible Companion becomes something you can actually deploy. Two items:
+
+TLS + auth on TCP
+The TCP server accepts a shared secret or certificate. Unauthenticated connections are rejected. This is the minimum bar for anything that touches a real network.
+Multi-client session isolation
+Two clients connect simultaneously. Their reads and writes are isolated — one client's staged writes do not bleed into the other's VERIFY phase. This requires a per-connection transaction context.
+
+Week 9 is listed here for orientation only. Do not implement it in Week 8. Scope is a wall.
+
+
+8. Acceptance Criteria
+
+python3 -m pytest cc/tests/test_mvp.py -v
+# 30 passed, 0 warnings on new tests
+
+python3 stress_harness.py
+# 29/29 — 0 deferred
+
+Both commands clean. That is the only verdict. Week 9 does not start until both are green.
+
+
+The runtime is scalable. The runtime is network-accessible. Week 9 makes it deployable.
