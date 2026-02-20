@@ -11,39 +11,43 @@ import os
 import hashlib
 from cc.capsule import export_capsule, import_capsule
 
-def compact_log(log_path: str, capsule_path: str, key_manager=None) -> str:
+def compact_log(db_path: str, log_path: str,
+                capsule_path: str,
+                rt=None,
+                key_manager=None) -> str:
     """
-    Find the log head from log_path, then export a capsule for the DB.
-    By convention, if log_path is receipts.jsonl, db_path is receipts.db or similar.
-    We'll assume db_path is derived or we just use what we have.
-    In our tests, db_path is just the .db file.
+    Write a capsule snapshot.
+    db_path and log_path are REQUIRED — no path inference.
+    If rt is provided, acquires rt._compact_lock to freeze run_cycle
+    during export. This closes the race window.
+    Returns the log_head hash embedded in the capsule.
     """
-    # 1. Get Log Head
-    head = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    if os.path.exists(log_path) and os.path.getsize(log_path) > 0:
-        with open(log_path, "rb") as f:
-            last_line = None
-            for line in f:
-                if line.strip():
-                    last_line = line
-            if last_line:
-                head = hashlib.sha256(last_line.strip()).hexdigest()
+    # Acquire freeze lock if runtime provided
+    lock = getattr(rt, '_compact_lock', None) if rt else None
 
-    # 2. Export Capsule (needs db_path)
-    db_path = log_path.replace('.jsonl', '.db')
-    if not os.path.exists(db_path):
-        # Fallback if the replacement didn't work (e.g. filename doesn't follow convention)
-        potential = log_path.rsplit('.', 1)[0] + '.db'
-        if os.path.exists(potential):
-            db_path = potential
-        else:
-            # If still not found, we use the original logic from the test
-            # But the briefing says compact_log(log_path, ...)
-            # So we MUST find the DB.
-            pass
+    if lock is not None:
+        lock.acquire()
+    try:
+        # 1. Get Log Head (from the log we are compacting)
+        head = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        if os.path.exists(log_path) and os.path.getsize(log_path) > 0:
+            with open(log_path, "rb") as f:
+                last_line = None
+                for line in f:
+                    if line.strip():
+                        last_line = line
+                if last_line:
+                    head = hashlib.sha256(last_line.strip()).hexdigest()
 
-    export_capsule(db_path, capsule_path, key_manager=key_manager, log_head=head)
-    return head
+        # 2. Export Capsule with deterministic log_head
+        export_capsule(db_path, capsule_path, key_manager=key_manager, log_head=head)
+    finally:
+        if lock is not None:
+            lock.release()
+
+    with open(capsule_path) as f:
+        caps = json.load(f)
+    return caps.get('log_head', '')
 
 def replay_from_snapshot(rt, capsule_path: str, log_path: str,
                           key_manager=None) -> None:
@@ -52,7 +56,7 @@ def replay_from_snapshot(rt, capsule_path: str, log_path: str,
     2. Read log_path. Skip all entries with hash matching the snapshot's log_head.
     3. Replay only the tail entries via rt.apply_receipt(receipt).
     """
-    import_capsule(capsule_path, rt.db_path, key_manager=key_manager)
+    import_capsule(capsule_path, rt.memory.db_path, key_manager=key_manager)
 
     with open(capsule_path) as f:
         caps = json.load(f)

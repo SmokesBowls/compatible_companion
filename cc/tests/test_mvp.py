@@ -3,9 +3,10 @@ import pytest
 import hashlib
 import json
 from cc.zw_block import ZWBlock
-from cc.memory import MemoryStore
-from cc.runtime import CompanionRuntime
+from cc.memory import MemoryStore, SqliteMemoryStore
+from cc.runtime import CompanionRuntime, AgentRuntime
 from cc.capsule import CapsuleIO
+from cc.identity import KeyManager, generate_keypair, PUB_FILE
 
 LOG_PATH = "test_receipts.jsonl"
 DB_PATH = "test_memory.db"
@@ -38,7 +39,7 @@ def test_zw_block_canonicalization():
 
 def test_full_cycle_success(clean_env):
     """Acceptance: A full PLAN->ACT->VERIFY->COMMIT cycle completes and emits a chained receipt."""
-    runtime = CompanionRuntime(DB_PATH, LOG_PATH)
+    runtime = CompanionRuntime(memory=SqliteMemoryStore(DB_PATH), log_path=LOG_PATH)
     receipt = runtime.ingest("User preference: dark mode", scope="style")
 
     assert receipt["verdict"] == "PASS"
@@ -62,10 +63,13 @@ def test_full_cycle_success(clean_env):
 
 def test_verify_failure(clean_env):
     """Acceptance: A VERIFY failure discards staged writes and records a FAIL receipt."""
-    runtime = CompanionRuntime(DB_PATH, LOG_PATH)
+    runtime = CompanionRuntime(memory=SqliteMemoryStore(DB_PATH), log_path=LOG_PATH)
+    from cc.policy_store import seal_policy
     # Add a policy rule that blocks specific keywords
     runtime.memory.add_policy_rule("rule1", "block forbidden word", "'forbidden' not in body")
     runtime.memory.conn.commit()
+    seal_policy(runtime.policy_store, LOG_PATH)
+    runtime._recheck_policy_integrity()
 
     # This should fail due to the keyword 'forbidden'
     receipt = runtime.ingest("This has forbidden word", scope="core")
@@ -83,14 +87,14 @@ def test_verify_failure(clean_env):
         # But wait, replay_log or other things might have added lines.
         # Let's just find the FAIL receipt.
         receipts = [json.loads(line) for line in f if line.strip()]
-        fail_receipts = [r for r in receipts if r["verdict"] == "FAIL"]
+        fail_receipts = [r for r in receipts if r.get("verdict") == "FAIL"]
         assert len(fail_receipts) >= 1
     runtime.close()
 
 def test_deterministic_replay(clean_env):
     """Acceptance: Given the receipt log, a clean runtime replays it and arrives at the same state_hash."""
     # 1. First runtime session
-    runtime1 = CompanionRuntime(DB_PATH, LOG_PATH)
+    runtime1 = CompanionRuntime(memory=SqliteMemoryStore(DB_PATH), log_path=LOG_PATH)
     runtime1.ingest("Memory unit A")
     runtime1.ingest("Memory unit B")
     final_state_hash = runtime1.last_state_hash
@@ -101,7 +105,7 @@ def test_deterministic_replay(clean_env):
     if os.path.exists(REPLAY_DB):
         os.remove(REPLAY_DB)
 
-    runtime2 = CompanionRuntime(REPLAY_DB, LOG_PATH)
+    runtime2 = CompanionRuntime(memory=SqliteMemoryStore(REPLAY_DB), log_path=LOG_PATH)
     # Replay from the existing LOG_PATH
     runtime2.replay_log(LOG_PATH)
 
@@ -117,7 +121,7 @@ def test_capsule_export(clean_env):
     from cc.identity import generate_keypair
     sk_b64, vk_b64 = generate_keypair()
 
-    runtime = CompanionRuntime(DB_PATH, LOG_PATH)
+    runtime = CompanionRuntime(memory=SqliteMemoryStore(DB_PATH), log_path=LOG_PATH)
     runtime.ingest("Core knowledge")
 
     io = CapsuleIO(runtime)
@@ -171,14 +175,14 @@ def test_capsule_export_import_roundtrip(clean_env):
     from cc.identity import generate_keypair
     sk_b64, vk_b64 = generate_keypair()
 
-    runtime = CompanionRuntime(DB_PATH, LOG_PATH)
+    runtime = CompanionRuntime(memory=SqliteMemoryStore(DB_PATH), log_path=LOG_PATH)
     runtime.ingest("Test Unit A")
 
     io = CapsuleIO(runtime)
     capsule = io.export_capsule("agent-x", {"persona": "helpful"})
 
     # Fresh runtime for import
-    runtime2 = CompanionRuntime("test_memory2.db", "test_receipts2.jsonl")
+    runtime2 = CompanionRuntime(memory=SqliteMemoryStore("test_memory2.db"), log_path="test_receipts2.jsonl")
     io2 = CapsuleIO(runtime2)
     report = io2.import_capsule(capsule)
 
@@ -202,7 +206,9 @@ def test_capsule_import_rejects_bad_sig(clean_env):
     from cc.identity import generate_keypair
     generate_keypair()
 
-    runtime = CompanionRuntime(DB_PATH, LOG_PATH)
+    from cc.identity import KeyManager
+    km = KeyManager.from_path('cc_identity.key')
+    runtime = CompanionRuntime(memory=SqliteMemoryStore(DB_PATH), log_path=LOG_PATH, key_manager=km)
     runtime.ingest("Secure Unit")
     io = CapsuleIO(runtime)
     capsule = io.export_capsule("agent-x", {})
@@ -210,7 +216,7 @@ def test_capsule_import_rejects_bad_sig(clean_env):
     # Tamper with body
     capsule["agent_id"] = "hacker-x"
 
-    runtime2 = CompanionRuntime("test_memory2.db", "test_receipts2.jsonl")
+    runtime2 = CompanionRuntime(memory=SqliteMemoryStore("test_memory2.db"), log_path="test_receipts2.jsonl")
     io2 = CapsuleIO(runtime2)
     with pytest.raises(ValueError, match="Capsule signature invalid"):
         io2.import_capsule(capsule)
@@ -228,7 +234,7 @@ def test_conflict_keep_local(clean_env):
     generate_keypair()
 
     # 1. Create local unit
-    runtime_local = CompanionRuntime("local.db", "local.jsonl")
+    runtime_local = CompanionRuntime(memory=SqliteMemoryStore("local.db"), log_path="local.jsonl")
     unit_id = "target_unit"
     unit_local = {
         "unit_id": unit_id, "scope": "core", "body": "Local Content",
@@ -238,7 +244,7 @@ def test_conflict_keep_local(clean_env):
     runtime_local.memory.commit_staged("rcpt_local", "snap_local")
 
     # 2. Create capsule with conflicting unit
-    runtime_remote = CompanionRuntime("remote.db", "remote.jsonl")
+    runtime_remote = CompanionRuntime(memory=SqliteMemoryStore("remote.db"), log_path="remote.jsonl")
     unit_remote = {
         "unit_id": unit_id, "scope": "core", "body": "Remote Content",
         "body_hash": hashlib.sha256(b"Remote Content").hexdigest()
@@ -269,11 +275,11 @@ def test_12_ttl_unit_invisible_after_expiry():
     never returned by mem_find, even if it is in the DB."""
     import tempfile, os
     from datetime import datetime, timedelta, UTC
-    from cc.memory import MemoryStore
+    from cc.memory import SqliteMemoryStore
 
     with tempfile.TemporaryDirectory() as tmp:
         db_path = os.path.join(tmp, 'test12.db')
-        store = MemoryStore(db_path)
+        store = SqliteMemoryStore(db_path)
 
         # Unit that expired 1 hour ago
         past = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
@@ -317,7 +323,7 @@ def test_13_ttl_survives_capsule_boundary():
     
             # --- Source runtime ---
             db_a = os.path.join(tmp, 'machine_a.db')
-            store_a = MemoryStore(db_a)
+            store_a = SqliteMemoryStore(db_a)
     
             future = (datetime.now(UTC) + timedelta(hours=2)).isoformat()
             store_a.mem_store(
@@ -334,7 +340,7 @@ def test_13_ttl_survives_capsule_boundary():
             # --- Destination runtime ---
             db_b = os.path.join(tmp, 'machine_b.db')
             import_capsule(capsule_path, db_b)
-            store_b = MemoryStore(db_b)
+            store_b = SqliteMemoryStore(db_b)
                                                                        
             # TTL value must be intact
             raw = store_b.get_raw_unit('u_ttl')  # bypasses TTL filter
@@ -357,7 +363,7 @@ def test_14_canon_scope_immutable():
     with tempfile.TemporaryDirectory() as tmp:
         db_path = os.path.join(tmp, 'test14.db')
         log_path = os.path.join(tmp, 'receipts.jsonl')
-        rt = AgentRuntime(db_path=db_path, log_path=log_path)
+        rt = AgentRuntime(memory=SqliteMemoryStore(db_path), log_path=log_path)
 
         # First write — must succeed
         result1 = rt.run_cycle(
@@ -412,14 +418,24 @@ def test_15_policy_rule_violation_blocks_commit():
     with tempfile.TemporaryDirectory() as tmp:
         db_path = os.path.join(tmp, 'test15.db')
         log_path = os.path.join(tmp, 'receipts.jsonl')
-        rt = AgentRuntime(db_path=db_path, log_path=log_path)
+        rt = AgentRuntime(memory=SqliteMemoryStore(db_path), log_path=log_path)
 
         # Insert a policy rule: 'style' units must have tags
+        import json
         rt.mem_store.add_policy_rule(
             rule_id='require_tags_on_style',
             description='style units must have at least one tag',
-            predicate="scope != 'style' or len(tags) > 0",
+            predicate=json.dumps({
+                'any': [
+                    {'field': 'scope', 'operator': 'neq', 'value': 'style'},
+                    {'field': 'tags', 'operator': 'min_length', 'value': 1}
+                ]
+            }),
         )
+
+        from cc.policy_store import seal_policy
+        seal_policy(rt.policy_store, log_path)
+        rt._recheck_policy_integrity()
 
         # Attempt to store a style unit with NO tags
         result = rt.run_cycle(
@@ -456,7 +472,7 @@ def test_corrupted_replay(clean_env):
     if os.path.exists(REPLAY_DB):
         os.remove(REPLAY_DB)
 
-    runtime1 = CompanionRuntime(DB_PATH, LOG_PATH)
+    runtime1 = CompanionRuntime(memory=SqliteMemoryStore(DB_PATH), log_path=LOG_PATH)
     runtime1.ingest("Memory unit A")
     # We need at least two receipts to corrupt a chain link (prev_receipt_hash)
     runtime1.ingest("Memory unit B")
@@ -474,7 +490,7 @@ def test_corrupted_replay(clean_env):
         f.writelines(lines)
 
     REPLAY_LOG = "corrupt_replay.jsonl"
-    runtime2 = CompanionRuntime(REPLAY_DB, REPLAY_LOG)
+    runtime2 = CompanionRuntime(memory=SqliteMemoryStore(REPLAY_DB), log_path=REPLAY_LOG)
     with pytest.raises(ValueError, match="Chain break"):
         runtime2.replay_log(LOG_PATH)
 
@@ -549,7 +565,7 @@ def test_17_style_profile_write_is_auditable():
     with tempfile.TemporaryDirectory() as tmp:
         db_path  = os.path.join(tmp, 'test17.db')
         log_path = os.path.join(tmp, 'receipts.jsonl')
-        rt = AgentRuntime(db_path=db_path, log_path=log_path)
+        rt = AgentRuntime(memory=SqliteMemoryStore(db_path), log_path=log_path)
 
         # Write 1: style unit via run_cycle (correct path)
         r1 = rt.run_cycle(
@@ -612,7 +628,7 @@ def test_18_allowed_tool_call_commits():
     with tempfile.TemporaryDirectory() as tmp:
         db_path  = os.path.join(tmp, 'test18.db')
         log_path = os.path.join(tmp, 'receipts.jsonl')
-        rt = AgentRuntime(db_path=db_path, log_path=log_path,
+        rt = AgentRuntime(memory=SqliteMemoryStore(db_path), log_path=log_path,
                           tool_allowlist=[ALLOWED_HOST])
         gw = ToolGateway([ALLOWED_HOST])
 
@@ -640,6 +656,52 @@ def test_18_allowed_tool_call_commits():
         assert tr[0]['network_call_made'] is True
         assert tr[0]['status_code']       == 200
 
+def test_40_data_driven_rule_engine():
+    """eval is gone. Structured rules evaluate correctly.
+    Injection attempt via rule predicate is impossible by construction.
+    """
+    import tempfile, os, json
+    from cc.runtime import AgentRuntime
+    from cc.policy_store import seal_policy, evaluate_rule
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db  = os.path.join(tmp,'t.db')
+        log = os.path.join(tmp,'r.jsonl')
+        rt  = AgentRuntime(db_path=db, log_path=log)
+
+        # Add a structured rule: scope must not be 'forbidden'
+        rt.policy_store.add_rule(
+            'no_forbidden',
+            'block forbidden scope',
+            json.dumps({'field':'scope','operator':'neq','value':'forbidden'})
+        )
+        seal_policy(rt.policy_store, log)
+        rt._recheck_policy_integrity()
+
+        # Allowed write
+        result = rt.run_cycle(
+            plan={'action':'mem_store','unit_id':'u1','scope':'core',
+                  'tags':[],'body':{'summary':'ok'}},
+            act_fn=lambda p:{**p}, invariants=[])
+        assert result == 'COMMIT', f'allowed write must COMMIT: {result}'
+
+        # Blocked write
+        result2 = rt.run_cycle(
+            plan={'action':'mem_store','unit_id':'u2','scope':'forbidden',
+                  'tags':[],'body':{'summary':'bad'}},
+            act_fn=lambda p:{**p}, invariants=[])
+        assert result2 == 'FAIL', f'forbidden scope must FAIL: {result2}'
+
+        # Injection attempt — a rule predicate that looks like code
+        # This must raise ValueError (unknown operator) not execute
+        evil_rule = {'operator': '__import__("os").system("rm -rf /")',
+                     'field': 'scope', 'value': 'core'}
+        try:
+            evaluate_rule(evil_rule, {'scope':'core'})
+            assert False, 'evil operator must raise ValueError'
+        except ValueError:
+            pass  # correct — operator not in whitelist
+
 def test_19_gateway_blocks_disallowed_host():
     """
     act_fn attempts a call to an unauthorized host.
@@ -658,7 +720,7 @@ def test_19_gateway_blocks_disallowed_host():
     with tempfile.TemporaryDirectory() as tmp:
         db_path  = os.path.join(tmp, 'test19.db')
         log_path = os.path.join(tmp, 'receipts.jsonl')
-        rt = AgentRuntime(db_path=db_path, log_path=log_path,
+        rt = AgentRuntime(memory=SqliteMemoryStore(db_path), log_path=log_path,
                           tool_allowlist=[ALLOWED_HOST])
         gw = ToolGateway([ALLOWED_HOST])
 
@@ -710,7 +772,7 @@ def test_20_verifier_catches_unauthorized_call():
     with tempfile.TemporaryDirectory() as tmp:
         db_path  = os.path.join(tmp, 'test20.db')
         log_path = os.path.join(tmp, 'receipts.jsonl')
-        rt = AgentRuntime(db_path=db_path, log_path=log_path,
+        rt = AgentRuntime(memory=SqliteMemoryStore(db_path), log_path=log_path,
                           tool_allowlist=[ALLOWED_HOST])
 
         def act_fn(plan):
@@ -759,7 +821,7 @@ def test_21_staged_writes_discarded_on_tool_violation():
     with tempfile.TemporaryDirectory() as tmp:
         db_path  = os.path.join(tmp, 'test21.db')
         log_path = os.path.join(tmp, 'receipts.jsonl')
-        rt = AgentRuntime(db_path=db_path, log_path=log_path,
+        rt = AgentRuntime(memory=SqliteMemoryStore(db_path), log_path=log_path,
                           tool_allowlist=[ALLOWED_HOST])
 
         def act_fn(plan):
@@ -802,30 +864,6 @@ def test_21_staged_writes_discarded_on_tool_violation():
         assert any('verifier_tool_allowlist_violation' in r.get('error', '')
                    for r in receipts if r['outcome'] == 'FAIL')
 
-def test_22_ast_whitelist_blocks_injection():
-    """
-    Submit a policy predicate containing __class__.__mro__.
-    eval_policy_predicate must raise PolicyRuleError.
-    """
-    from cc.policy import eval_policy_predicate, PolicyRuleError
-    
-    context = {'scope': 'core', 'tags': ['important'], 'body_hash': 'abc'}
-    
-    # 1. Clean predicate
-    assert eval_policy_predicate("scope == 'core' and 'important' in tags", context) is True
-    
-    # 2. Malicious predicate (introspection)
-    malicious = "scope.__class__.__mro__"
-    import pytest
-    with pytest.raises(PolicyRuleError) as excinfo:
-        eval_policy_predicate(malicious, context)
-    assert "Disallowed operation: Attribute" in str(excinfo.value)
-
-    # 3. Disallowed function
-    with pytest.raises(PolicyRuleError) as excinfo:
-        eval_policy_predicate("eval('print(1)')", context)
-    assert "Disallowed function call" in str(excinfo.value)
-
 def test_23_key_manager_session_resident():
     """
     Instantiate KeyManager, sign twice, verify identical/valid,
@@ -848,10 +886,10 @@ def test_23_key_manager_session_resident():
         cc.identity.PUB_FILE = pub_file
         
         try:
-            sk_b64, vk_b64 = generate_keypair()
+            sk_b64, vk_b64 = generate_keypair(key_file=sk_file, pub_file=pub_file)
             payload = b"hello world"
             
-            km = KeyManager(sk_file)
+            km = KeyManager.from_path(sk_file)
             sig1 = km.sign(payload)
             sig2 = km.sign(payload)
             
@@ -882,7 +920,7 @@ def test_24_mcp_mem_find_returns_results():
     
     with tempfile.TemporaryDirectory() as tmp:
         db_path = os.path.join(tmp, 'test24.db')
-        rt = AgentRuntime(db_path=db_path, log_path=os.path.join(tmp, 'log.jsonl'))
+        rt = AgentRuntime(memory=SqliteMemoryStore(db_path), log_path=os.path.join(tmp, 'log.jsonl'))
         
         # Pre-seed a unit
         rt.memory.mem_store(unit_id='u1', scope='core', body='test content')
@@ -925,7 +963,7 @@ def test_25_mcp_mem_store_full_cycle():
     with tempfile.TemporaryDirectory() as tmp:
         db_path = os.path.join(tmp, 'test25.db')
         log_path = os.path.join(tmp, 'log.jsonl')
-        rt = AgentRuntime(db_path=db_path, log_path=log_path)
+        rt = AgentRuntime(memory=SqliteMemoryStore(db_path), log_path=log_path)
         
         server, handlers = build_server(rt, None)
         
@@ -956,7 +994,7 @@ def test_26_ttl_tombstone_not_hard_deleted():
 
     with tempfile.TemporaryDirectory() as tmp:
         db = os.path.join(tmp, 'test26.db')
-        rt = AgentRuntime(db_path=db, log_path=os.path.join(tmp, 'r.jsonl'))
+        rt = AgentRuntime(memory=SqliteMemoryStore(db), log_path=os.path.join(tmp, 'r.jsonl'))
         # Unit that expired 1 second ago
         expired = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
         rt.run_cycle(
@@ -998,10 +1036,10 @@ def test_27_signed_capsule_tamper_rejected():
         with open(key_path, 'w') as f:
             f.write(json.dumps({'sk': sk_b64, 'vk': vk_b64}))
         
-        km = KeyManager(key_path)
+        km = KeyManager.from_path(key_path)
 
         db1 = os.path.join(tmp, 's1.db')
-        rt1 = AgentRuntime(db_path=db1, log_path=os.path.join(tmp, 'r1.jsonl'))
+        rt1 = AgentRuntime(memory=SqliteMemoryStore(db1), log_path=os.path.join(tmp, 'r1.jsonl'))
         rt1.run_cycle(
             plan={'action':'mem_store','unit_id':'u1','scope':'core',
                   'tags':[],'body':{'summary':'signed'}},
@@ -1021,7 +1059,7 @@ def test_27_signed_capsule_tamper_rejected():
         db2 = os.path.join(tmp, 's2.db')
         import pytest
         with pytest.raises(Exception):
-            import_capsule(caps_path, db2, key_manager=km)
+            import_capsule(caps_path, db2, key_manager=None)
 
         # db2 must not exist or be empty (no write happened)
         assert not os.path.exists(db2), \
@@ -1044,7 +1082,7 @@ def test_28_session_continuity():
         log = os.path.join(tmp, 'receipts.jsonl')
 
         # ── Session 1 ──────────────────────────────────────────────
-        rt1 = AgentRuntime(db_path=db, log_path=log)
+        rt1 = AgentRuntime(memory=SqliteMemoryStore(db), log_path=log)
         rt1.run_cycle(
             plan={'action':'mem_store','unit_id':'pref_voice',
                   'scope':'style','tags':['voice'],
@@ -1061,7 +1099,7 @@ def test_28_session_continuity():
         del rt1   # session 1 ends — runtime discarded
 
         # ── Session 2 — fresh runtime, same DB ──────────────────────
-        rt2 = AgentRuntime(db_path=db, log_path=log)
+        rt2 = AgentRuntime(memory=SqliteMemoryStore(db), log_path=log)
         units = rt2.memory.mem_find(scope='style')
         ids = [u.get('unit_id') for u in units]
 
@@ -1070,7 +1108,7 @@ def test_28_session_continuity():
         rt2.close()
 
         # ── Session 3 — accumulate further ──────────────────────────
-        rt3 = AgentRuntime(db_path=db, log_path=log)
+        rt3 = AgentRuntime(memory=SqliteMemoryStore(db), log_path=log)
         rt3.run_cycle(
             plan={'action':'mem_store','unit_id':'fact_001',
                   'scope':'core','tags':['bio'],
@@ -1080,7 +1118,7 @@ def test_28_session_continuity():
         rt3.close()
         del rt3
 
-        rt4 = AgentRuntime(db_path=db, log_path=log)
+        rt4 = AgentRuntime(memory=SqliteMemoryStore(db), log_path=log)
         all_units = rt4.memory.mem_find(scope='style') + rt4.memory.mem_find(scope='core')
         all_ids = [u.get('unit_id') for u in all_units]
         assert 'pref_voice' in all_ids,  'must accumulate across 3 sessions'
@@ -1103,7 +1141,7 @@ def test_29_snapshot_checkpoint_replay():
         snap = os.path.join(tmp, 'snapshot.capsule.json')
 
         # Write three units
-        rt = AgentRuntime(db_path=db, log_path=log)
+        rt = AgentRuntime(memory=SqliteMemoryStore(db), log_path=log)
         for i in range(3):
             rt.run_cycle(
                 plan={'action':'mem_store', 'unit_id': f'u{i}',
@@ -1113,8 +1151,7 @@ def test_29_snapshot_checkpoint_replay():
         full_hash = rt.last_state_hash
 
         # Take snapshot after 3 units
-        # compact_log signature changed to (log_path, capsule_path, key_manager=None)
-        compact_log(log, snap)
+        compact_log(db, log, snap)
 
         # Write one more unit AFTER snapshot
         rt.run_cycle(
@@ -1125,13 +1162,13 @@ def test_29_snapshot_checkpoint_replay():
         final_hash = rt.last_state_hash
 
         # Full replay from genesis
-        rt_full = AgentRuntime(db_path=os.path.join(tmp,'full.db'),
+        rt_full = AgentRuntime(memory=SqliteMemoryStore(os.path.join(tmp,'full.db')),
                                log_path=os.path.join(tmp,'full.jsonl'))
         rt_full.replay_log(log)
         assert rt_full.last_state_hash == final_hash, 'full replay must match'
 
         # Snapshot replay — must reach same final hash
-        rt_snap = AgentRuntime(db_path=os.path.join(tmp,'snap.db'),
+        rt_snap = AgentRuntime(memory=SqliteMemoryStore(os.path.join(tmp,'snap.db')),
                                log_path=os.path.join(tmp,'snap.jsonl'))
         replay_from_snapshot(rt_snap, snap, log)
         assert rt_snap.last_state_hash == final_hash, \
@@ -1156,7 +1193,7 @@ async def test_30_tcp_transport_mem_find():
     
     with tempfile.TemporaryDirectory() as tmp:
         db = os.path.join(tmp, "tcp.db")
-        rt = AgentRuntime(db_path=db)
+        rt = AgentRuntime(memory=SqliteMemoryStore(db), log_path=os.path.join(tmp, "r.jsonl"))
         
         # Add a unit to verify find
         rt.run_cycle(
@@ -1200,15 +1237,16 @@ async def test_30_tcp_transport_mem_find():
     
     with tempfile.TemporaryDirectory() as tmp:
         db = os.path.join(tmp, "tcp.db")
-        rt = AgentRuntime(db_path=db)
+        rt = AgentRuntime(memory=SqliteMemoryStore(db), log_path=os.path.join(tmp, "r.jsonl"))
         rt.run_cycle(
             plan={'action':'mem_store','unit_id':'tcp_u1','scope':'core','body':{'val':42}},
             act_fn=lambda p: {**p}, invariants=[]
         )
         
         SECRET = 'test-token'
-        task = asyncio.create_task(start_tcp_server(rt, None, host='127.0.0.1', port=7710, token=SECRET))
-        await asyncio.sleep(0.1)
+        started = asyncio.Event()
+        task = asyncio.create_task(start_tcp_server(rt, None, host='127.0.0.1', port=7710, token=SECRET, started_event=started))
+        await started.wait()
         
         try:
             reader, writer = await asyncio.open_connection('127.0.0.1', 7710)
@@ -1253,16 +1291,17 @@ def test_31_auth_wrong_token_rejected():
             else:
                 # Fallback if key missing
                 with open(kp, 'wb') as f: f.write(os.urandom(32))
-            km = KeyManager(kp)
+            km = KeyManager.from_path(kp)
             
-            rt = AgentRuntime(db_path=os.path.join(tmp,'s.db'),
+            rt = AgentRuntime(memory=SqliteMemoryStore(os.path.join(tmp,'s.db')),
                               log_path=os.path.join(tmp,'r.jsonl'))
 
             SECRET = 'correct-horse-battery-staple'
+            started = asyncio.Event()
             task = asyncio.create_task(
                 start_tcp_server(rt, km, host='127.0.0.1',
-                                 port=7711, token=SECRET))
-            await asyncio.sleep(0.1)
+                                 port=7711, token=SECRET, started_event=started))
+            await started.wait()
 
             # ── Wrong token ──────────────────────────────────────────
             r, w = await asyncio.open_connection('127.0.0.1', 7711)
@@ -1340,19 +1379,20 @@ def test_32_concurrent_session_isolation():
                 shutil.copy2('cc_identity.key', kp)
             else:
                 with open(kp, 'wb') as f: f.write(os.urandom(32))
-            km = KeyManager(kp)
+            km = KeyManager.from_path(kp)
             
             # Shared paths
             db_path = os.path.join(tmp,'s.db')
             log_path = os.path.join(tmp,'r.jsonl')
-            rt = AgentRuntime(db_path=db_path, log_path=log_path)
+            rt = AgentRuntime(memory=SqliteMemoryStore(db_path), log_path=log_path)
             
             SECRET = 'session-isolation-test'
             # Use port 7712
+            started = asyncio.Event()
             task = asyncio.create_task(
                 start_tcp_server(rt, km, host='127.0.0.1',
-                                 port=7712, token=SECRET))
-            await asyncio.sleep(0.1)
+                                 port=7712, token=SECRET, started_event=started))
+            await started.wait()
 
             # Client A: stores a unit
             a_cmds = [
@@ -1391,5 +1431,440 @@ def test_32_concurrent_session_isolation():
             try: await task
             except asyncio.CancelledError: pass
             rt.close()
+
+    asyncio.run(run())
+
+def test_33_policy_seal_and_verify():
+    """Sealing writes a POLICY_HASH receipt. Integrity check passes after seal."""
+    import tempfile, os
+    from cc.runtime import AgentRuntime
+    from cc.policy_store import seal_policy, verify_policy_integrity
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db  = os.path.join(tmp, 'test33.db')
+        log = os.path.join(tmp, 'test33.jsonl')
+        rt  = AgentRuntime(memory=SqliteMemoryStore(db), log_path=log)
+
+        # Before seal: locked_down (no POLICY_HASH receipt yet)
+        assert rt.policy_mode == 'locked_down', \
+            f'expected locked_down before seal, got {rt.policy_mode}'
+
+        # Seal
+        seal_policy(rt.policy_store, log)
+        rt._recheck_policy_integrity()
+
+        # After seal: normal
+        assert rt.policy_mode == 'normal', \
+            f'expected normal after seal, got {rt.policy_mode}'
+
+        # verify_policy_integrity returns True
+        ok, reason = verify_policy_integrity(rt.policy_store, log)
+        assert ok, f'integrity must pass after seal: {reason}'
+        rt.close()
+
+def test_34_tampered_policy_detected():
+    """Direct DB edit to policy_rules is caught on next integrity check."""
+    import tempfile, os, sqlite3
+    from cc.runtime import AgentRuntime
+    from cc.policy_store import seal_policy, verify_policy_integrity
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db  = os.path.join(tmp, 'test34.db')
+        log = os.path.join(tmp, 'test34.jsonl')
+        rt  = AgentRuntime(memory=SqliteMemoryStore(db), log_path=log)
+
+        # Add a rule and seal
+        import json
+        rt.policy_store.add_rule(
+            'r1', 'test rule', json.dumps({'field': 'scope', 'operator': 'neq', 'value': 'forbidden'})
+        )
+        seal_policy(rt.policy_store, log)
+        rt._recheck_policy_integrity()
+        assert rt.policy_mode == 'normal'
+
+        # Simulate attacker: delete rule directly via SQLite
+        conn = sqlite3.connect(db)
+        conn.execute("DELETE FROM policy_rules WHERE rule_id='r1'")
+        conn.commit()
+        conn.close()
+
+        # Integrity check must now fail
+        rt._recheck_policy_integrity()
+        assert rt.policy_mode == 'locked_down', \
+            'tampered policy table must trigger locked_down'
+        assert rt.policy_integrity_warning is not None
+        rt.close()
+
+def test_35_locked_down_skips_db_rules():
+    """In locked_down mode: DB policy rules are skipped.
+    Constitutional rules (canon immutability) still enforce.
+    """
+    import tempfile, os, sqlite3
+    from cc.runtime import AgentRuntime
+    from cc.policy_store import seal_policy
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db  = os.path.join(tmp, 'test35.db')
+        log = os.path.join(tmp, 'test35.jsonl')
+        rt  = AgentRuntime(memory=SqliteMemoryStore(db), log_path=log)
+
+        # Add a DB rule that would block all core writes
+        import json
+        rt.policy_store.add_rule(
+            'block_all', 'block everything', json.dumps({'field': 'scope', 'operator': 'neq', 'value': 'core'})
+        )
+        seal_policy(rt.policy_store, log)
+        rt._recheck_policy_integrity()
+
+        # Tamper: delete the rule to enter locked_down
+        conn = sqlite3.connect(db)
+        conn.execute("DELETE FROM policy_rules WHERE rule_id='block_all'")
+        conn.commit(); conn.close()
+        rt._recheck_policy_integrity()
+        assert rt.policy_mode == 'locked_down'
+
+        # In locked_down: DB rule is skipped — core write must COMMIT
+        result = rt.run_cycle(
+            plan={'action':'mem_store','unit_id':'u1','scope':'core',
+                  'tags':[],'body':{'summary':'test'}},
+            act_fn=lambda p: {**p}, invariants=[],
+        )
+        assert result == 'COMMIT', \
+            f'locked_down must skip DB rules: {result}'
+
+        # Constitutional rule still enforces: second canon write must FAIL
+        rt.run_cycle(
+            plan={'action':'mem_store','unit_id':'canon1','scope':'canon',
+                  'tags':[],'body':{'summary':'first'}},
+            act_fn=lambda p: {**p}, invariants=[],
+        )
+        result2 = rt.run_cycle(
+            plan={'action':'mem_store','unit_id':'canon1','scope':'canon',
+                  'tags':[],'body':{'summary':'overwrite'}},
+            act_fn=lambda p: {**p}, invariants=[],
+        )
+        assert result2 == 'FAIL', 'canon immutability must hold in locked_down'
+        rt.close()
+
+def test_37_snapshot_freeze_no_zombie():
+    """
+    compact_log with explicit paths and freeze lock.
+    A concurrent run_cycle cannot commit between log-head read and export.
+    """
+    import tempfile, os, threading, time
+    from cc.runtime import AgentRuntime
+    from cc.compact import compact_log, replay_from_snapshot
+    from cc.policy_store import seal_policy
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db   = os.path.join(tmp, 'main.db')
+        log  = os.path.join(tmp, 'receipts.jsonl')
+        snap = os.path.join(tmp, 'snap.json')
+        rt   = AgentRuntime(db_path=db, log_path=log)
+        seal_policy(rt.policy_store, log)
+        rt._recheck_policy_integrity()
+
+        # Write two units
+        for i in range(2):
+            rt.run_cycle(
+                plan={'action':'mem_store', 'unit_id':f'u{i}',
+                      'scope':'core','tags':[],'body':{'summary':f'u{i}'}},
+                act_fn=lambda p: {**p}, invariants=[])
+
+        # Take snapshot with explicit paths and freeze
+        log_head = compact_log(db, log, snap, rt=rt)
+        assert log_head, 'compact_log must return a log_head'
+
+        # Write one more after snapshot
+        rt.run_cycle(
+            plan={'action':'mem_store','unit_id':'u2','scope':'core',
+                  'tags':[],'body':{'summary':'post-snap'}},
+            act_fn=lambda p: {**p}, invariants=[])
+
+        final_hash = rt.last_state_hash
+
+        # Replay from snapshot must reach final_hash
+        rt2 = AgentRuntime(db_path=os.path.join(tmp,'r.db'),
+                           log_path=os.path.join(tmp,'r.jsonl'))
+        replay_from_snapshot(rt2, snap, log)
+        assert rt2.last_state_hash == final_hash, \
+            f'snapshot replay must match: {rt2.last_state_hash} != {final_hash}'
+
+        # All 3 units present
+        units = rt2.memory.mem_find(scope='core')
+        ids = [u.get('unit_id') for u in units]
+        assert all(f'u{i}' in ids for i in range(3)), f'all units must be present: {ids}'
+        rt.close()
+        rt2.close()
+
+def test_36_mcp_adapter_nonblocking():
+    """
+    MCP handlers complete via run_in_executor.
+    Event loop processes a concurrent task while DB call is in flight.
+    """
+    import asyncio, tempfile, os
+    from cc.runtime import AgentRuntime
+    from cc.identity import generate_keypair, KeyManager
+    from cc.mcp_adapter import build_server
+    from cc.policy_store import seal_policy
+    import shutil
+
+    async def run():
+        with tempfile.TemporaryDirectory() as tmp:
+            generate_keypair()
+            # Copy to tmp and load
+            km = KeyManager.from_path(shutil.copy2('cc_identity.key', os.path.join(tmp,'id.key')))
+            rt = AgentRuntime(db_path=os.path.join(tmp,'s.db'),
+                              log_path=os.path.join(tmp,'r.jsonl'),
+                              key_manager=km)
+            seal_policy(rt.policy_store, rt.log_path)
+            rt._recheck_policy_integrity()
+            _, handlers = build_server(rt, km)
+
+            # Fire mem_store and a concurrent no-op task simultaneously
+            concurrent_flag = []
+            async def side_task():
+                await asyncio.sleep(0)   # yields to event loop
+                concurrent_flag.append(True)
+
+            results, _ = await asyncio.gather(
+                handlers['mem_store']('mem_store', {
+                    'unit_id': 'nb1', 'scope': 'core',
+                    'tags': [], 'body': {'summary': 'nonblocking'}}),
+                side_task(),
+            )
+            import json
+            outcome = json.loads(results[0].text) 
+            if 'error' in outcome:
+                print(f"MCP ERROR: {outcome['error']}")
+            assert 'outcome' in outcome, f"Expected 'outcome' in {outcome}"
+            assert outcome['outcome'] == 'COMMIT', f'must COMMIT: {outcome}'
+            assert concurrent_flag, 'event loop must have processed side_task'
+            rt.close()
+
+    asyncio.run(run())
+
+def test_38_mcp_batch_store():
+    """
+    batch_store tool: Atomic ingestion of multiple units through a single run_cycle.
+    """
+    import asyncio, tempfile, os, json, shutil
+    from cc.runtime import AgentRuntime
+    from cc.identity import KeyManager
+    from cc.mcp_adapter import build_server
+    from cc.policy_store import seal_policy
+
+    async def run():
+        with tempfile.TemporaryDirectory() as tmp:
+            km = KeyManager.from_path(shutil.copy2('cc_identity.key', os.path.join(tmp,'id.key')))
+            rt = AgentRuntime(db_path=os.path.join(tmp,'s.db'),
+                              log_path=os.path.join(tmp,'r.jsonl'),
+                              key_manager=km)
+            seal_policy(rt.policy_store, rt.log_path)
+            rt._recheck_policy_integrity()
+            _, handlers = build_server(rt, km)
+
+            units = [
+                {'unit_id': 'b1', 'scope': 'core', 'body': {'val': 1}, 'tags': ['tag1']},
+                {'unit_id': 'b2', 'scope': 'core', 'body': {'val': 2}, 'tags': ['tag2']}
+            ]
+            
+            res = await handlers['batch_store']('batch_store', {'units': units})
+            outcome = json.loads(res[0].text)
+            if 'error' in outcome:
+                print(f"BATCH_STORE ERROR: {outcome['error']}")
+            assert outcome['outcome'] == 'COMMIT'
+
+            found = rt.memory.mem_find(scope='core')
+            ids = [u['unit_id'] for u in found]
+            assert 'b1' in ids and 'b2' in ids
+            
+            # Verify they share the same receipt in the log
+            with open(rt.log_path) as f:
+                lines = f.readlines()
+                last_rcpt = json.loads(lines[-1])
+                staged = last_rcpt.get('staged_units', [])
+                assert len(staged) == 2, f"Expected 2 staged units in last receipt, got {len(staged)}"
+            
+            rt.close()
+
+    asyncio.run(run())
+
+def test_39_mcp_policy_status():
+    """
+    policy_status tool reports locked_down mode if log is unsealed.
+    """
+    import asyncio, tempfile, os, json, shutil
+    from cc.runtime import AgentRuntime
+    from cc.identity import KeyManager
+    from cc.mcp_adapter import build_server
+
+    async def run():
+        with tempfile.TemporaryDirectory() as tmp:
+            km = KeyManager.from_path(shutil.copy2('cc_identity.key', os.path.join(tmp,'id.key')))
+            # UNSEALED log
+            rt = AgentRuntime(db_path=os.path.join(tmp,'s.db'),
+                              log_path=os.path.join(tmp,'r.jsonl'),
+                              key_manager=km)
+            assert rt.policy_mode == 'locked_down'
+            _, handlers = build_server(rt, km)
+
+            res = await handlers['policy_status']('policy_status', {})
+            status = json.loads(res[0].text)
+            assert status['policy_mode'] == 'locked_down'
+            assert 'never been sealed' in status['integrity_warning']
+            rt.close()
+
+    asyncio.run(run())
+
+def test_41_tls_server():
+    """TLS server accepts TLS clients. Plaintext clients fail at socket level."""
+    import asyncio, ssl, tempfile, os, json, subprocess
+    from cc.runtime import AgentRuntime
+    from cc.identity import generate_keypair, KeyManager
+    from cc.server import start_tcp_server, make_dev_ssl_context
+    from cc.policy_store import seal_policy
+    from cc.memory import SqliteMemoryStore
+    import shutil
+
+    async def run():
+        with tempfile.TemporaryDirectory() as tmp:
+            # Generate self-signed cert
+            cert = os.path.join(tmp, 'cert.pem')
+            key  = os.path.join(tmp, 'key.pem')
+            # Workaround for openssl req not being on path or failing:
+            # We assume it is on path as per briefing.
+            subprocess.run([
+                'openssl','req','-x509','-newkey','rsa:2048',
+                '-keyout', key, '-out', cert,
+                '-days','1','-nodes','-subj','/CN=localhost'
+            ], check=True, capture_output=True)
+
+            generate_keypair()
+            km = KeyManager.from_path(shutil.copy2('cc_identity.key',
+                            os.path.join(tmp,'id.key')))
+            rt = AgentRuntime(memory=SqliteMemoryStore(os.path.join(tmp,'s.db')),
+                              log_path=os.path.join(tmp,'r.jsonl'))
+            seal_policy(rt.policy_store, rt.log_path)
+            rt._recheck_policy_integrity()
+
+            ssl_ctx = make_dev_ssl_context(cert, key)
+            started = asyncio.Event()
+            task = asyncio.create_task(
+                start_tcp_server(rt, km, host='127.0.0.1', port=7720,
+                                 token='tls-test', ssl_context=ssl_ctx,
+                                 started_event=started))
+            await started.wait()
+
+            # TLS client — must succeed
+            client_ctx = ssl.create_default_context()
+            client_ctx.load_verify_locations(cert)
+            # Disable hostname check for localhost dev cert
+            client_ctx.check_hostname = False
+            
+            r, w = await asyncio.open_connection(
+                '127.0.0.1', 7720, ssl=client_ctx)
+            
+            w.write((json.dumps({'auth':'tls-test'})+'\n').encode())
+            await w.drain()
+            line = await r.readline()
+            resp = json.loads(line.decode())
+            assert resp['ok'], f'TLS client must auth: {resp}'
+            w.close(); await w.wait_closed()
+
+            # Plaintext client — must fail at TLS handshake
+            try:
+                r2, w2 = await asyncio.open_connection('127.0.0.1', 7720)
+                w2.write(b'plaintext\n')
+                await w2.drain()
+                await r2.readline()
+                assert False, 'plaintext client must fail'
+            except Exception:
+                pass  # correct
+
+            task.cancel()
+            try: await task
+            except asyncio.CancelledError: pass
+
+    asyncio.run(run())
+
+def test_42_per_client_identity():
+    """Known client authenticates via challenge-response.
+    Unknown client (not in allowlist) is rejected.
+    """
+    import asyncio, json, tempfile, os, shutil, base64
+    from cc.runtime import AgentRuntime
+    from cc.identity import generate_keypair, KeyManager
+    from cc.server import start_tcp_server
+    from cc.policy_store import seal_policy
+    from cc.memory import SqliteMemoryStore
+    import nacl.signing
+
+    async def run():
+        with tempfile.TemporaryDirectory() as tmp:
+            # Server identity
+            generate_keypair()
+            km = KeyManager.from_path(shutil.copy2('cc_identity.key',
+                            os.path.join(tmp,'id.key')))
+            rt = AgentRuntime(memory=SqliteMemoryStore(os.path.join(tmp,'s.db')),
+                              log_path=os.path.join(tmp,'r.jsonl'))
+            seal_policy(rt.policy_store, rt.log_path)
+            rt._recheck_policy_integrity()
+
+            # Known client keypair
+            sk = nacl.signing.SigningKey.generate()
+            vk_b64 = base64.b64encode(bytes(sk.verify_key)).decode()
+            client_keys = {'trusted-agent': vk_b64}
+
+            started = asyncio.Event()
+            task = asyncio.create_task(
+                start_tcp_server(rt, km, host='127.0.0.1', port=7730,
+                                 client_keys=client_keys, started_event=started))
+            await started.wait()
+
+            async def do_handshake(client_sk, client_id, client_vk):
+                r, w = await asyncio.open_connection('127.0.0.1', 7730)
+                # Step 1: Hello
+                w.write((json.dumps({'hello':client_id,'vk':client_vk})+'\n').encode())
+                await w.drain()
+                # Step 2: Challenge
+                line = await r.readline()
+                if not line:
+                    w.close(); await w.wait_closed()
+                    return {'ok': False, 'error': 'no challenge'}
+                challenge_resp = json.loads(line.decode())
+                if 'challenge' not in challenge_resp:
+                    w.close(); await w.wait_closed()
+                    return challenge_resp
+                
+                # Step 3: Signature
+                nonce = challenge_resp['challenge'].encode()
+                signed = client_sk.sign(nonce)
+                sig_b64 = base64.b64encode(signed.signature).decode()
+                w.write((json.dumps({'signature':sig_b64})+'\n').encode())
+                await w.drain()
+                
+                # Step 4: Outcome
+                line = await r.readline()
+                if not line:
+                    w.close(); await w.wait_closed()
+                    return {'ok': False, 'error': 'no outcome'}
+                result = json.loads(line.decode())
+                w.close(); await w.wait_closed()
+                return result
+
+            # Known client — must succeed
+            resp = await do_handshake(sk, 'trusted-agent', vk_b64)
+            assert resp['ok'], f'known client must auth: {resp}'
+
+            # Unknown client — must be rejected
+            evil_sk = nacl.signing.SigningKey.generate()
+            evil_vk = base64.b64encode(bytes(evil_sk.verify_key)).decode()
+            resp2 = await do_handshake(evil_sk, 'evil-agent', evil_vk)
+            assert not resp2.get('ok'), f'unknown client must be rejected: {resp2}'
+
+            task.cancel()
+            try: await task
+            except asyncio.CancelledError: pass
 
     asyncio.run(run())

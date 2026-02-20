@@ -1,0 +1,30 @@
+{
+  "capsule_id": "acd35d02-f978-4105-af8f-804e89b31ef5",
+  "capsule_series_uuid": "8e6726fb-5f58-443c-9b99-42824caa0dda",
+  "prev_capsule_hash": null,
+  "exported_at": "2026-02-19T22:00:52.873134+00:00",
+  "agent_id": "agent-x",
+  "log_chain_head": "c746e5958a07d0ef0f448bbf604b5162101f4e865300f7e5de901c5b7d61a243",
+  "log_head": "c746e5958a07d0ef0f448bbf604b5162101f4e865300f7e5de901c5b7d61a243",
+  "memory_units": [
+    {
+      "unit_id": "3739c0e8",
+      "scope": "core",
+      "body": {
+        "summary": "This is a product layer test"
+      },
+      "tags": [
+        "product",
+        "cli"
+      ],
+      "body_hash": "c6bbcb067d1d644aa1837df1998d9fca9d5ee0cdbdb9bbce356f8b0a05219223",
+      "ttl_expires_at": null,
+      "created_at": 1771531686
+    }
+  ],
+  "policy": {
+    "tool_allowlist": []
+  },
+  "public_key": "qYDKSnI/eBazKFR6dAkDpcqpuUAi4NmsaFliXwki2Tg=",
+  "signature": "DGlL3a85i69W626x5noIQG6up3qewM59U0l4oye21NzxDuETT39KTnG9eS/eKWgYfLEYyQzjApbdkuIFZ+Q3DQ=="
+}

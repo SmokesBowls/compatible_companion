@@ -1,0 +1,520 @@
+﻿COMPATIBLE COMPANION
+Week 10 Briefing — AI to AI
+From: Claude (Architecture Lead)  ·  To: Antigravity (Implementation Lead)
+Full editorial + self-testing authority granted
+
+0. State of the Stack — Frozen
+35 tests, 31/31 harness. All of this is locked. Build above it.
+
+✓
+35 pytest tests
+0 failures · 0 warnings on new tests
+✓
+31/31 stress harness
+0 deferred · all corruption injections caught
+✓
+State machine + receipts
+PLAN→ACT→VERIFY→COMMIT · chained SHA3-256 · deterministic replay
+✓
+Ed25519 + signed capsule
+bytearray key · zero on close · tamper raises before DB write
+✓
+PolicyStore + integrity
+SHA-256 hash-bound to receipt chain · locked_down on tamper · seal_policy operator step
+✓
+Session isolation
+Singleton runtime · SessionContext · per-connection staging
+✓
+TCP transport + auth
+asyncio.Event sync · shared-secret handshake · wrong token closed silently
+✓
+Snapshot checkpointing
+compact_log + replay_from_snapshot · O(recent) startup
+
+
+1. Week 10 Scope — Four Proofs
+Week 10 makes the runtime production-usable. The foundation is solid rock. The structure on top needs renovation. Four targeted fixes — no new capabilities, no new dependencies except one optional stdlib addition. Total: 39 pytest tests green.
+
+#
+Proof
+Acceptance criterion
+Files
+P1
+Async/sync decoupling
+MCP adapter wraps blocking run_cycle and mem_find calls in loop.run_in_executor. Event loop stays responsive under load. No DB call blocks the event loop thread.
+mcp_adapter.py
+P2
+Snapshot freeze + explicit paths
+compact_log requires explicit db_path. A runtime freeze context manager prevents any run_cycle commit between log-head read and capsule export. No zombie state possible.
+compact.py + runtime.py
+P3
+Semantic MCP API
+run_cycle removed from public MCP tool list. mem_store and mem_find remain. batch_store added as a semantic tool that builds the plan internally. Internal plumbing never leaks.
+mcp_adapter.py
+P4
+policy_status tool
+New MCP tool: policy_status returns current policy_mode, warning message, and sealed hash. Agent can diagnose lockdown without shell access. Failure becomes maintenance, not mystery.
+mcp_adapter.py
+
+
+2. P1 — Async/Sync Decoupling in MCP Adapter
+The call_tool method is async. Everything it calls is blocking SQLite. The event loop freezes on every DB operation. The 5-second timeout in memory.py is the admission — the system was already experiencing contention. Fix it at the source.
+
+2.1 mcp_adapter.py — run_in_executor pattern
+# In cc/mcp_adapter.py — update the handler methods
+# Wrap ALL blocking calls in run_in_executor
+import asyncio
+
+async def _handle_mem_find(rt, tool_name, args):
+    scope = args.get('scope', 'core')
+    loop = asyncio.get_event_loop()
+    # Offload blocking SQLite call to thread pool
+    units = await loop.run_in_executor(
+        None,  # default ThreadPoolExecutor
+        lambda: rt.memory.mem_find(scope=scope)
+    )
+    import json
+    from mcp.types import TextContent
+    return [TextContent(type='text', text=json.dumps(units))]
+
+async def _handle_mem_store(rt, km, tool_name, args):
+    loop = asyncio.get_event_loop()
+    # run_cycle is the blocking call — offload it
+    result = await loop.run_in_executor(
+        None,
+        lambda: rt.run_cycle(
+            plan={
+                'action':    'mem_store',
+                'unit_id':   args.get('unit_id'),
+                'scope':     args.get('scope', 'core'),
+                'tags':      args.get('tags', []),
+                'body':      args.get('body', {}),
+                'ttl_expires_at': args.get('ttl_expires_at'),
+            },
+            act_fn=lambda p: {**p},
+            invariants=[],
+        )
+    )
+    from mcp.types import TextContent
+    import json
+    return [TextContent(type='text', text=json.dumps({'outcome': result}))]
+
+IMPORTANT: run_in_executor moves the blocking call to a background thread.
+The event loop stays responsive — it can service heartbeats, cancellation requests,
+and other connections while the DB operation completes.
+
+This does NOT give you concurrent writes. SQLite WAL still serializes writers.
+What you gain: the server stops freezing. Requests queue instead of timing out.
+That is the difference between a robust service and a fragile one.
+
+2.2 Acceptance Test (Test 36)
+def test_36_mcp_adapter_nonblocking():
+    """
+    MCP handlers complete via run_in_executor.
+    Event loop processes a concurrent task while DB call is in flight.
+    """
+    import asyncio, tempfile, os
+    from cc.runtime import AgentRuntime
+    from cc.identity import generate_keypair, KeyManager
+    from cc.mcp_adapter import build_server
+    from cc.policy_store import seal_policy
+    import shutil
+
+    async def run():
+        with tempfile.TemporaryDirectory() as tmp:
+            generate_keypair()
+            km = KeyManager(shutil.copy2('cc_identity.key',
+                            os.path.join(tmp,'id.key')))
+            rt = AgentRuntime(db_path=os.path.join(tmp,'s.db'),
+                              log_path=os.path.join(tmp,'r.jsonl'))
+            seal_policy(rt.policy_store, rt.log_path)
+            rt._recheck_policy_integrity()
+            _, handlers = build_server(rt, km)
+
+            # Fire mem_store and a concurrent no-op task simultaneously
+            concurrent_flag = []
+            async def side_task():
+                await asyncio.sleep(0)   # yields to event loop
+                concurrent_flag.append(True)
+
+            results, _ = await asyncio.gather(
+                handlers['mem_store']('mem_store', {
+                    'unit_id': 'nb1', 'scope': 'core',
+                    'tags': [], 'body': {'summary': 'nonblocking'}}),
+                side_task(),
+            )
+            import json
+            outcome = json.loads(results[0].text)
+            assert outcome['outcome'] == 'COMMIT', f'must COMMIT: {outcome}'
+            assert concurrent_flag, 'event loop must have processed side_task'
+
+    asyncio.run(run())
+
+
+3. P2 — Snapshot Freeze + Explicit Paths
+
+Current compact_log derives the db_path by replacing .jsonl with .db in the log path.
+This breaks if logs and DB are on different drives, differently named, or in different dirs.
+
+Worse: there is a race window between reading the log head and exporting the capsule.
+A write that lands in that window creates a zombie state — data in the snapshot
+that is not accounted for in the log head recorded. Replay integrity breaks silently.
+This will not appear in tests. It will appear six months later during an incident audit.
+
+3.1 compact.py — explicit paths + freeze
+# cc/compact.py — replace compact_log with this
+
+import json, threading
+from cc.capsule import export_capsule, import_capsule
+
+def compact_log(db_path: str, log_path: str,
+                capsule_path: str,
+                rt=None,
+                key_manager=None) -> str:
+    """
+    Write a capsule snapshot.
+    db_path and log_path are REQUIRED — no path inference.
+    If rt is provided, acquires rt._compact_lock to freeze run_cycle
+    during export. This closes the race window.
+    Returns the log_head hash embedded in the capsule.
+    """
+    # Acquire freeze lock if runtime provided
+    lock = getattr(rt, '_compact_lock', None) if rt else None
+
+    if lock is not None:
+        lock.acquire()
+    try:
+        export_capsule(db_path, capsule_path, key_manager=key_manager)
+    finally:
+        if lock is not None:
+            lock.release()
+
+    with open(capsule_path) as f:
+        caps = json.load(f)
+    return caps.get('log_head', '')
+
+3.2 runtime.py — _compact_lock
+# In cc/runtime.py — AgentRuntime.__init__, add:
+import threading
+self._compact_lock = threading.Lock()
+
+# In run_cycle(), wrap the COMMIT phase:
+def run_cycle(self, plan, act_fn, invariants):
+    # ...
+    # COMMIT phase — must not run during snapshot export
+    with self._compact_lock:
+        # ... existing commit logic ...
+        self._commit_staged()
+        self._emit_receipt('COMMIT', ...)
+    return 'COMMIT'
+
+3.3 Acceptance Test (Test 37)
+def test_37_snapshot_freeze_no_zombie():
+    """
+    compact_log with explicit paths and freeze lock.
+    A concurrent run_cycle cannot commit between log-head read and export.
+    """
+    import tempfile, os, threading, time
+    from cc.runtime import AgentRuntime
+    from cc.compact import compact_log, replay_from_snapshot
+    from cc.policy_store import seal_policy
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db   = os.path.join(tmp, 'main.db')
+        log  = os.path.join(tmp, 'receipts.jsonl')
+        snap = os.path.join(tmp, 'snap.json')
+        rt   = AgentRuntime(db_path=db, log_path=log)
+        seal_policy(rt.policy_store, log)
+        rt._recheck_policy_integrity()
+
+        # Write two units
+        for i in range(2):
+            rt.run_cycle(
+                plan={'action':'mem_store', 'unit_id':f'u{i}',
+                      'scope':'core','tags':[],'body':{'summary':f'u{i}'}},
+                act_fn=lambda p: {**p}, invariants=[])
+
+        # Take snapshot with explicit paths and freeze
+        log_head = compact_log(db, log, snap, rt=rt)
+        assert log_head, 'compact_log must return a log_head'
+
+        # Write one more after snapshot
+        rt.run_cycle(
+            plan={'action':'mem_store','unit_id':'u2','scope':'core',
+                  'tags':[],'body':{'summary':'post-snap'}},
+            act_fn=lambda p: {**p}, invariants=[])
+
+        final_hash = rt.last_state_hash
+
+        # Replay from snapshot must reach final_hash
+        rt2 = AgentRuntime(db_path=os.path.join(tmp,'r.db'),
+                           log_path=os.path.join(tmp,'r.jsonl'))
+        replay_from_snapshot(rt2, snap, log)
+        assert rt2.last_state_hash == final_hash, \
+            f'snapshot replay must match: {rt2.last_state_hash} != {final_hash}'
+
+        # All 3 units present
+        units = rt2.memory.mem_find(scope='core')
+        ids = [u.get('unit_id') for u in units]
+        assert all(f'u{i}' in ids for i in range(3)), f'all units must be present: {ids}'
+
+
+4. P3 — Semantic MCP API — Remove run_cycle
+run_cycle is the engine. It must not be the steering wheel. Exposing it as an MCP tool forces the calling agent to construct internal plan dicts, understand the CC schema, and break silently when that schema changes. Remove it. The agent calls mem_store. The adapter builds the plan.
+
+4.1 Tool list change
+# In cc/mcp_adapter.py — tool definitions
+#
+# REMOVE: run_cycle tool
+# KEEP:   mem_find, mem_store
+# ADD:    batch_store
+
+# batch_store tool definition:
+{
+    'name': 'batch_store',
+    'description': 'Store multiple memory units in a single atomic cycle.',
+    'inputSchema': {
+        'type': 'object',
+        'properties': {
+            'units': {
+                'type': 'array',
+                'items': {
+                    'type': 'object',
+                    'properties': {
+                        'unit_id': {'type': 'string'},
+                        'scope':   {'type': 'string'},
+                        'tags':    {'type': 'array'},
+                        'body':    {'type': 'object'},
+                        'ttl_expires_at': {'type': 'string'},
+                    },
+                    'required': ['unit_id', 'scope', 'body']
+                }
+            }
+        },
+        'required': ['units']
+    }
+}
+
+4.2 batch_store handler
+# In cc/mcp_adapter.py
+async def _handle_batch_store(rt, km, tool_name, args):
+    units = args.get('units', [])
+    if not units:
+        from mcp.types import TextContent
+        import json
+        return [TextContent(type='text',
+                text=json.dumps({'outcome': 'FAIL', 'error': 'no units provided'}))]
+
+    loop = asyncio.get_event_loop()
+    results = []
+    for unit in units:
+        result = await loop.run_in_executor(
+            None,
+            lambda u=unit: rt.run_cycle(
+                plan={
+                    'action':   'mem_store',
+                    'unit_id':  u.get('unit_id'),
+                    'scope':    u.get('scope', 'core'),
+                    'tags':     u.get('tags', []),
+                    'body':     u.get('body', {}),
+                    'ttl_expires_at': u.get('ttl_expires_at'),
+                },
+                act_fn=lambda p: {**p},
+                invariants=[],
+            )
+        )
+        results.append({'unit_id': unit.get('unit_id'), 'outcome': result})
+
+    from mcp.types import TextContent
+    import json
+    return [TextContent(type='text', text=json.dumps({'results': results}))]
+
+4.3 Acceptance Test (Test 38)
+def test_38_semantic_mcp_api():
+    """
+    run_cycle is not in the MCP tool list.
+    batch_store stores multiple units via handlers.
+    mem_find returns all committed units.
+    """
+    import asyncio, tempfile, os, json
+    from cc.runtime import AgentRuntime
+    from cc.identity import generate_keypair, KeyManager
+    from cc.mcp_adapter import build_server
+    from cc.policy_store import seal_policy
+    import shutil
+
+    async def run():
+        with tempfile.TemporaryDirectory() as tmp:
+            generate_keypair()
+            km = KeyManager(shutil.copy2('cc_identity.key',
+                            os.path.join(tmp,'id.key')))
+            rt = AgentRuntime(db_path=os.path.join(tmp,'s.db'),
+                              log_path=os.path.join(tmp,'r.jsonl'))
+            seal_policy(rt.policy_store, rt.log_path)
+            rt._recheck_policy_integrity()
+            server, handlers = build_server(rt, km)
+
+            # run_cycle must not be in the public tool list
+            assert 'run_cycle' not in handlers, \
+                'run_cycle must not be exposed as MCP tool'
+
+            # batch_store must be present
+            assert 'batch_store' in handlers, \
+                'batch_store must be in handlers'
+
+            # batch_store stores two units
+            results = await handlers['batch_store']('batch_store', {
+                'units': [
+                    {'unit_id':'b1','scope':'core','tags':[],'body':{'summary':'first'}},
+                    {'unit_id':'b2','scope':'core','tags':[],'body':{'summary':'second'}},
+                ]
+            })
+            batch_result = json.loads(results[0].text)
+            outcomes = [r['outcome'] for r in batch_result['results']]
+            assert all(o == 'COMMIT' for o in outcomes), f'all must COMMIT: {outcomes}'
+
+            # mem_find returns both
+            found = await handlers['mem_find']('mem_find', {'scope':'core'})
+            units = json.loads(found[0].text)
+            ids = [u.get('unit_id') for u in units]
+            assert 'b1' in ids and 'b2' in ids, f'both units must be found: {ids}'
+
+    asyncio.run(run())
+
+
+5. P4 — policy_status MCP Tool
+When the runtime enters locked_down mode the agent currently gets a generic error and no way to diagnose it. It cannot tell if it wrote a bad unit or if the database was tampered with. The policy_status tool gives the agent eyes. Failure becomes maintenance, not mystery.
+
+5.1 policy_status handler
+# In cc/mcp_adapter.py — add policy_status tool
+
+# Tool definition:
+{
+    'name': 'policy_status',
+    'description': 'Returns the current policy integrity status of the runtime.',
+    'inputSchema': {'type': 'object', 'properties': {}}
+}
+
+# Handler:
+async def _handle_policy_status(rt, tool_name, args):
+    from mcp.types import TextContent
+    import json
+    status = {
+        'policy_mode':    rt.policy_mode,
+        'integrity_ok':   rt.policy_mode == 'normal',
+        'warning':        rt.policy_integrity_warning,
+        'sealed_hash':    rt.policy_store.compute_hash()
+            if rt.policy_mode == 'normal' else None,
+    }
+    return [TextContent(type='text', text=json.dumps(status))]
+
+policy_status is READ-ONLY. It exposes health information only.
+It does NOT expose a reseal command via MCP — resealing requires operator access.
+A rogue agent cannot use policy_status to bypass or restore untrusted rules.
+It can only see the wound. A human operator treats it.
+
+5.2 Acceptance Test (Test 39)
+def test_39_policy_status_tool():
+    """
+    policy_status returns normal when sealed.
+    Returns locked_down with warning when policy table is tampered.
+    """
+    import asyncio, tempfile, os, json, sqlite3
+    from cc.runtime import AgentRuntime
+    from cc.identity import generate_keypair, KeyManager
+    from cc.mcp_adapter import build_server
+    from cc.policy_store import seal_policy
+    import shutil
+
+    async def run():
+        with tempfile.TemporaryDirectory() as tmp:
+            generate_keypair()
+            km = KeyManager(shutil.copy2('cc_identity.key',
+                            os.path.join(tmp,'id.key')))
+            db  = os.path.join(tmp,'s.db')
+            log = os.path.join(tmp,'r.jsonl')
+            rt  = AgentRuntime(db_path=db, log_path=log)
+            rt.policy_store.add_rule('r1','test rule',"scope != 'forbidden'")
+            seal_policy(rt.policy_store, log)
+            rt._recheck_policy_integrity()
+            _, handlers = build_server(rt, km)
+
+            assert 'policy_status' in handlers, 'policy_status must be in handlers'
+
+            # Normal state
+            result = await handlers['policy_status']('policy_status', {})
+            status = json.loads(result[0].text)
+            assert status['policy_mode'] == 'normal'
+            assert status['integrity_ok'] is True
+            assert status['warning'] is None
+
+            # Tamper the policy table
+            conn = sqlite3.connect(db)
+            conn.execute("DELETE FROM policy_rules WHERE rule_id='r1'")
+            conn.commit(); conn.close()
+            rt._recheck_policy_integrity()
+
+            # Locked down state
+            result2 = await handlers['policy_status']('policy_status', {})
+            status2 = json.loads(result2[0].text)
+            assert status2['policy_mode'] == 'locked_down'
+            assert status2['integrity_ok'] is False
+            assert status2['warning'] is not None
+            assert 'mismatch' in status2['warning'].lower() or \
+                   'hash' in status2['warning'].lower()
+
+    asyncio.run(run())
+
+
+6. Execution Order
+Do not skip steps. Each step must be green before the next.
+
+1
+Run existing suite — 35 passed. Touch nothing until confirmed.
+2
+Add _compact_lock to AgentRuntime.__init__. Wrap COMMIT phase in run_cycle with the lock.
+3
+Update compact_log signature to require db_path and log_path explicitly. Remove all path inference. Wire the freeze lock.
+4
+Write Test 37 (snapshot freeze). Run alone. Confirm pass. Run full suite — 36 passed.
+5
+Update MCP adapter: wrap run_cycle and mem_find calls in run_in_executor.
+6
+Write Test 36 (non-blocking). Run alone. Confirm pass. Run full suite — 37 passed.
+7
+Remove run_cycle from the MCP tool list. Add batch_store tool and handler.
+8
+Write Test 38 (semantic API). Run alone. Confirm pass. Run full suite — 38 passed.
+9
+Add policy_status tool and handler to MCP adapter.
+10
+Write Test 39 (policy_status). Run alone. Confirm pass. Run full suite — 39 passed, 0 warnings.
+11
+Add stress harness sections 20 (async non-blocking) and 21 (policy_status). Run — 33/33.
+
+
+7. What Week 10 Does NOT Touch
+✗  State machine, receipt chain, capsule schema — frozen
+✗  PolicyStore interface and seal_policy logic — frozen
+✗  KeyManager / identity.py — frozen
+✗  server.py / SessionContext / TCP auth — frozen
+✗  eval replacement (data-driven rule engine) — Week 11
+✗  TLS on TCP — Week 11
+✗  Per-client Ed25519 identity — Week 11
+✗  No new dependencies (asyncio, threading — stdlib only)
+
+
+8. Acceptance Criteria
+
+python3 -m pytest cc/tests/test_mvp.py -v
+# 39 passed, 0 warnings on new tests
+
+python3 stress_harness.py
+# 33/33 — 0 deferred
+
+Both commands clean. That is the only verdict.
+A secure system that confuses the agent is a secure paperweight.
+Week 10 makes it usable.
+
+
+The vault now has a door the agent can actually open.

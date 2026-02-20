@@ -7,7 +7,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp import types
 
-from cc.runtime import AgentRuntime
+from cc.runtime import AgentRuntime, SessionContext
 from cc.capsule import export_capsule, CapsuleIO
 from cc.identity import KeyManager
 
@@ -56,16 +56,32 @@ def build_server(rt: AgentRuntime, key_manager: KeyManager) -> Server:
                 }
             ),
             types.Tool(
-                name="run_cycle",
-                description="Run a full PLAN→ACT→VERIFY→COMMIT cycle.",
+                name="batch_store",
+                description="Atomic store for multiple memory units. Goes through run_cycle.",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "plan": {"type": "object", "description": "The plan dict for the cycle."},
-                        "invariants": {"type": "array", "items": {"type": "string"}, "description": "List of invariant names."}
+                        "units": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "unit_id": {"type": "string"},
+                                    "scope": {"type": "string"},
+                                    "body": {"type": "object"},
+                                    "tags": {"type": "array", "items": {"type": "string"}}
+                                },
+                                "required": ["unit_id", "scope", "body"]
+                            }
+                        }
                     },
-                    "required": ["plan"]
+                    "required": ["units"]
                 }
+            ),
+            types.Tool(
+                name="policy_status",
+                description="Check if the verifier is in 'locked_down' mode and why. (P4 diagnostic)",
+                inputSchema={"type": "object", "properties": {}}
             ),
             types.Tool(
                 name="capsule_export",
@@ -80,11 +96,17 @@ def build_server(rt: AgentRuntime, key_manager: KeyManager) -> Server:
         ]
 
     @server.call_tool()
-    async def call_tool(name: str, arguments: dict):
+    async def call_tool(name: str, arguments: dict, session_context: SessionContext = None):
+        loop = asyncio.get_event_loop()
         try:
             if name == "mem_find":
-                results = rt.memory.mem_find(scope=arguments.get('scope'))
-                # Handle filtering and limiting locally if needed
+                # Offload blocking SQLite call
+                results = await loop.run_in_executor(
+                    None,
+                    lambda: rt.memory.mem_find(scope=arguments.get('scope'))
+                )
+                
+                # Handle filtering and limiting locally 
                 if arguments.get('tags'):
                     tags = set(arguments['tags'])
                     results = [u for u in results if any(t in tags for t in u.get('tags', []))]
@@ -107,27 +129,49 @@ def build_server(rt: AgentRuntime, key_manager: KeyManager) -> Server:
                     import time
                     plan['ttl_expires_at'] = int(time.time() + arguments['ttl_seconds'])
                 
-                result = rt.run_cycle(plan=plan, act_fn=_mem_store_act, invariants=[])
-                return [types.TextContent(type='text', text=json.dumps({'outcome': result}))]
-                
-            elif name == "run_cycle":
-                # We need a dummy act_fn because we can't safely pass complex code via MCP yet
-                # For Week 6, run_cycle tool assumes the plan itself describes the action
-                # and acts like a pass-through if no explicit act_fn is provided.
-                # Actually, the spec says "act_fn is not exposed — the adapter provides it internally"
-                # For run_cycle we'll use a pass-through that returns the plan.
-                def _adapter_act(p): return p
-                result = rt.run_cycle(
-                    plan=arguments['plan'],
-                    act_fn=_adapter_act,
-                    invariants=arguments.get('invariants', [])
+                # run_cycle is blocking — offload it
+                result = await loop.run_in_executor(
+                    None,
+                    lambda: rt.run_cycle(plan=plan, act_fn=_mem_store_act, invariants=[], session_context=session_context)
                 )
                 return [types.TextContent(type='text', text=json.dumps({'outcome': result}))]
                 
+            elif name == "batch_store":
+                # Implementation of P3: Semantic atomic ingestion
+                units = arguments['units']
+                plan = {
+                    'action': 'batch_store',
+                    'units': units
+                }
+                
+                def _batch_act(p):
+                    # Return list of units for the collector in run_cycle
+                    return {'units': p['units']}
+                
+                result = await loop.run_in_executor(
+                    None,
+                    lambda: rt.run_cycle(plan=plan, act_fn=_batch_act, invariants=[], session_context=session_context)
+                )
+                return [types.TextContent(type='text', text=json.dumps({'outcome': result}))]
+                
+            elif name == "policy_status":
+                return [types.TextContent(
+                    type='text',
+                    text=json.dumps({
+                        'policy_mode': getattr(rt, 'policy_mode', 'unknown'),
+                        'integrity_warning': getattr(rt, 'policy_integrity_warning', None)
+                    })
+                )]
+            
             elif name == "capsule_export":
+                # Export involves DB reads and signing — offload it
                 io = CapsuleIO(rt)
                 agent_id = arguments.get('agent_id', 'companion-v1')
-                caps = io.export_capsule(agent_id=agent_id, profile={})
+                
+                caps = await loop.run_in_executor(
+                    None,
+                    lambda: io.export_capsule(agent_id=agent_id, profile={})
+                )
                 return [types.TextContent(type='text', text=json.dumps(caps))]
                 
             raise ValueError(f"Unknown tool: {name}")
@@ -135,16 +179,43 @@ def build_server(rt: AgentRuntime, key_manager: KeyManager) -> Server:
         except Exception as e:
             return [types.TextContent(type='text', text=json.dumps({'error': str(e)}))]
 
-    return server, {"mem_find": call_tool, "mem_store": call_tool, "run_cycle": call_tool, "capsule_export": call_tool, "list_tools": list_tools}
+    async def _dispatch(name: str, args: dict, session_context: SessionContext = None):
+        return await call_tool(name, args, session_context=session_context)
+
+    handlers = {
+        "mem_find": _dispatch,
+        "mem_store": _dispatch,
+        "batch_store": _dispatch,
+        "policy_status": _dispatch,
+        "capsule_export": _dispatch,
+        "list_tools": list_tools
+    }
+
+    return server, handlers
 
 async def main():
+    # ── PATH RESOLUTION (Boundary Layer) ───────────────────────────
     base_dir = pathlib.Path.home() / '.compatible'
-    rt = AgentRuntime() 
-    
+    db_path = os.environ.get('CC_DB_PATH') or str(base_dir / 'companion.db')
+    log_path = os.environ.get('CC_LOG_PATH') or str(base_dir / 'receipts.jsonl')
     key_path = os.environ.get('CC_KEY_PATH') or str(base_dir / 'identity.key')
+    
+    # ── DEPENDENCY INITIALIZATION ──────────────────────────────────
+    import sqlite3
+    from cc.memory import SqliteMemoryStore
+    
+    # Ensure directory exists
+    os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
+    os.makedirs(os.path.dirname(os.path.abspath(log_path)), exist_ok=True)
+
+    memory = SqliteMemoryStore(db_path)
+    
     km = None
     if os.path.exists(key_path):
-        km = KeyManager(key_path)
+        with open(key_path) as f:
+            km = KeyManager.from_dict(json.load(f))
+    
+    rt = AgentRuntime(memory=memory, log_path=log_path, key_manager=km)
     
     server, handlers = build_server(rt, km)
     try:

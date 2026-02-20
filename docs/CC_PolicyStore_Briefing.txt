@@ -1,0 +1,455 @@
+﻿COMPATIBLE COMPANION
+Policy Store & Integrity Briefing — AI to AI
+From: Claude (Architecture Lead)  ·  To: Antigravity (Implementation Lead)
+Full editorial + self-testing authority granted
+
+0. The Problem
+The receipt chain is a fortress. The policy_rules table is left out in the open.
+
+In a local-first system, an attacker with filesystem access does not need a network exploit.
+They open companion.db with any SQLite browser, delete the rule they dislike, and restart.
+The companion wakes up with no memory of that rule — lobotomized.
+All the work on the immutable receipt log is for nothing if the rules that govern it are mutable.
+
+This is not a theoretical threat. It is a five-minute attack on a local machine.
+
+The fix is a two-tier policy architecture that was partially already in place:
+
+Tier
+Where it lives
+Tamper resistance
+Constitutional (hardcoded)
+runtime.py — if statements in the Verifier
+Attacker must modify source code. Cannot be deleted from DB.
+Legislative (dynamic)
+policy_rules table in companion.db
+Currently ZERO protection. Week 9.5 fixes this with hash binding.
+
+
+1. What Is Already Constitutional — Do Not Touch
+These are already hardcoded in runtime.py. They are safe. Do not move them to the DB and do not modify them.
+
+✓
+_verify_canon_immutability
+Write-once enforcement on scope=canon. Runs before policy rules. Not overridable.
+✓
+_verify_tool_receipts
+Tool allowlist enforcement. Verifier-level. Independent of gateway.
+✓
+_eval_policy_rules engine
+The sandbox evaluator logic itself is hardcoded. Only the predicates it runs are dynamic.
+
+
+2. PolicyStore Interface
+The Verifier must not know or care whether policies live in SQLite, Postgres, or a signed JSON file. Introduce a PolicyStore abstraction. The concrete SQLite implementation stays — only the interface is added.
+
+2.1 New File: cc/policy_store.py
+# cc/policy_store.py
+"""
+PolicyStore interface for Compatible Companion.
+
+The Verifier interacts with policies through this interface only.
+The concrete backend (SQLite today, Postgres tomorrow) is an implementation detail.
+"""
+import hashlib, json
+from abc import ABC, abstractmethod
+
+class PolicyStore(ABC):
+
+    @abstractmethod
+    def get_active_rules(self) -> list[dict]:
+        """Return all is_active=1 rules as list of dicts, sorted by rule_id."""
+        ...
+
+    @abstractmethod
+    def add_rule(self, rule_id: str, description: str, predicate: str) -> None:
+        """Insert a new active rule."""
+        ...
+
+    @abstractmethod
+    def set_rule_active(self, rule_id: str, is_active: bool) -> None:
+        """Enable or disable a rule."""
+        ...
+
+    def compute_hash(self) -> str:
+        """
+        Deterministic SHA-256 of the active policy set.
+        Sorted by rule_id, stable JSON serialization.
+        This method is NOT abstract — it is the same for all backends.
+        """
+        rules = self.get_active_rules()
+        canonical = json.dumps(
+            [{'rule_id': r['rule_id'],
+              'description': r['description'],
+              'predicate': r['predicate']}
+             for r in sorted(rules, key=lambda r: r['rule_id'])],
+            sort_keys=True, separators=(',', ':')
+        )
+        return hashlib.sha256(canonical.encode('utf-8')).hexdigest()
+
+
+class SQLitePolicyStore(PolicyStore):
+    """Concrete SQLite backend. Wraps the existing policy_rules table."""
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    def get_active_rules(self) -> list[dict]:
+        cur = self._conn.execute(
+            'SELECT rule_id, description, predicate FROM policy_rules'
+            ' WHERE is_active=1 ORDER BY rule_id'
+        )
+        cols = [d[0] for d in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+    def add_rule(self, rule_id, description, predicate):
+        from datetime import datetime
+        self._conn.execute(
+            'INSERT INTO policy_rules'
+            ' (rule_id, description, predicate, is_active, created_at)'
+            ' VALUES (?,?,?,1,?)',
+            (rule_id, description, predicate,
+             datetime.utcnow().isoformat())
+        )
+        self._conn.commit()
+
+    def set_rule_active(self, rule_id, is_active):
+        self._conn.execute(
+            'UPDATE policy_rules SET is_active=? WHERE rule_id=?',
+            (1 if is_active else 0, rule_id)
+        )
+        self._conn.commit()
+
+
+3. Policy Integrity — verify_policy_integrity
+A pure function. Takes the policy store and the receipts log path. Returns True if the active rule set matches the last sealed hash in the receipt chain. Returns False if tampered or never sealed.
+
+3.1 Add to cc/policy_store.py
+# Append to cc/policy_store.py
+
+def verify_policy_integrity(policy_store: PolicyStore,
+                             receipts_path: str) -> tuple[bool, str]:
+    """
+    Compare the current active policy hash against the last
+    POLICY_HASH receipt in the receipt log.
+
+    Returns (True, '') if hashes match.
+    Returns (False, reason) if tampered, unsealed, or log unreadable.
+    """
+    current_hash = policy_store.compute_hash()
+
+    # Walk receipts log — find the LAST POLICY_HASH entry
+    last_sealed = None
+    try:
+        with open(receipts_path) as f:
+            for line in f:
+                line = line.strip()
+                if not line: continue
+                try:
+                    entry = json.loads(line)
+                    if entry.get('type') == 'POLICY_HASH':
+                        last_sealed = entry.get('hash')
+                except Exception:
+                    continue
+    except FileNotFoundError:
+        return False, 'receipts log not found'
+
+    if last_sealed is None:
+        return False, 'policy set has never been sealed (run: companion policy:seal)'
+
+    if current_hash != last_sealed:
+        return False, (
+            f'policy hash mismatch — expected {last_sealed[:16]}...'
+            f' got {current_hash[:16]}...'
+        )
+
+    return True, ''
+
+
+def seal_policy(policy_store: PolicyStore,
+                receipts_path: str,
+                key_manager=None) -> str:
+    """
+    Compute the current policy hash and append a POLICY_HASH receipt
+    to the receipts log. This is the operator blessing step.
+    Returns the hash that was sealed.
+    """
+    from datetime import datetime, timezone
+    h = policy_store.compute_hash()
+    receipt = {
+        'type':      'POLICY_HASH',
+        'hash':      h,
+        'sealed_at': datetime.now(timezone.utc).isoformat(),
+    }
+    if key_manager is not None:
+        import json as _json
+        canonical = _json.dumps(receipt, sort_keys=True).encode()
+        receipt['signature'] = key_manager.sign(canonical)
+    with open(receipts_path, 'a') as f:
+        f.write(json.dumps(receipt) + '\n')
+    return h
+
+
+4. Runtime Integration
+
+4.1 AgentRuntime startup — policy_mode
+At the end of AgentRuntime.__init__, after the DB is initialised, run the integrity check and set policy_mode on self.
+
+# In cc/runtime.py — AgentRuntime.__init__ (end of method)
+
+from cc.policy_store import SQLitePolicyStore, verify_policy_integrity
+
+self.policy_store = SQLitePolicyStore(self.conn)
+
+integrity_ok, reason = verify_policy_integrity(
+    self.policy_store, self.log_path
+)
+if integrity_ok:
+    self.policy_mode = 'normal'
+    self.policy_integrity_warning = None
+else:
+    self.policy_mode = 'locked_down'
+    self.policy_integrity_warning = reason
+    # Emit a startup receipt documenting the failure
+    self._emit_receipt('POLICY_INTEGRITY_FAIL', error=reason)
+
+4.2 _eval_policy_rules — respect policy_mode
+Modify the existing _eval_policy_rules in runtime.py to skip DB rules when locked down.
+
+# In cc/runtime.py — _eval_policy_rules (top of method)
+
+def _eval_policy_rules(self, staged_writes):
+    # If policy integrity check failed at startup, DB rules are untrusted.
+    # Only hardcoded constitutional rules apply.
+    if self.policy_mode == 'locked_down':
+        return None   # no error — constitutional rules already ran above this
+
+    # ... existing rule fetch and sandbox eval logic unchanged ...
+
+4.3 Sealed policy receipt schema
+# POLICY_HASH receipt — appended to receipts.jsonl by seal_policy()
+{
+  "type":      "POLICY_HASH",
+  "hash":      "sha256hex...",
+  "sealed_at": "2026-02-19T12:00:00+00:00",
+  "signature": "base64_ed25519_sig_or_null"
+}
+
+# POLICY_INTEGRITY_FAIL receipt — written by runtime on startup failure
+{
+  "type":           "POLICY_INTEGRITY_FAIL",
+  "outcome":        "FAIL",
+  "error":          "policy hash mismatch — expected abc123... got def456...",
+  "policy_mode":    "locked_down",
+  "timestamp":      "2026-02-19T12:00:00+00:00"
+}
+
+
+5. First Seal — Bootstrap
+IMPORTANT: Existing runtimes have never been sealed.
+On first startup after this change, policy_mode will be 'locked_down' because
+no POLICY_HASH receipt exists in the log yet.
+
+Antigravity must add a one-time seal step to the test fixtures and to any
+AgentRuntime that needs dynamic policies to function.
+Call seal_policy(rt.policy_store, rt.log_path) after creating the runtime
+and before running cycles that depend on policy rules.
+
+# Bootstrap pattern — add to test fixtures and integration setup
+from cc.policy_store import seal_policy
+
+rt = AgentRuntime(db_path=db, log_path=log)
+
+# Seal the initial policy set (empty or with pre-loaded rules)
+# This writes the first POLICY_HASH receipt into the log.
+seal_policy(rt.policy_store, rt.log_path)
+
+# Now policy_mode will be 'normal' on next instantiation.
+# OR: restart rt so it re-evaluates integrity with the new receipt.
+rt._recheck_policy_integrity()   # add this helper — see below
+
+# Add to AgentRuntime in runtime.py
+def _recheck_policy_integrity(self):
+    """Re-run integrity check after sealing. Updates policy_mode in place."""
+    ok, reason = verify_policy_integrity(self.policy_store, self.log_path)
+    self.policy_mode = 'normal' if ok else 'locked_down'
+    self.policy_integrity_warning = None if ok else reason
+
+
+6. Acceptance Tests
+
+Test 33 — Policy seal and verify
+def test_33_policy_seal_and_verify():
+    """Sealing writes a POLICY_HASH receipt. Integrity check passes after seal."""
+    import tempfile, os
+    from cc.runtime import AgentRuntime
+    from cc.policy_store import seal_policy, verify_policy_integrity, SQLitePolicyStore
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db  = os.path.join(tmp, 'test33.db')
+        log = os.path.join(tmp, 'test33.jsonl')
+        rt  = AgentRuntime(db_path=db, log_path=log)
+
+        # Before seal: locked_down (no POLICY_HASH receipt yet)
+        assert rt.policy_mode == 'locked_down', \
+            f'expected locked_down before seal, got {rt.policy_mode}'
+
+        # Seal
+        seal_policy(rt.policy_store, log)
+        rt._recheck_policy_integrity()
+
+        # After seal: normal
+        assert rt.policy_mode == 'normal', \
+            f'expected normal after seal, got {rt.policy_mode}'
+
+        # verify_policy_integrity returns True
+        ok, reason = verify_policy_integrity(rt.policy_store, log)
+        assert ok, f'integrity must pass after seal: {reason}'
+
+Test 34 — Tampered policy table detected
+def test_34_tampered_policy_detected():
+    """Direct DB edit to policy_rules is caught on next integrity check."""
+    import tempfile, os, sqlite3
+    from cc.runtime import AgentRuntime
+    from cc.policy_store import seal_policy, verify_policy_integrity
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db  = os.path.join(tmp, 'test34.db')
+        log = os.path.join(tmp, 'test34.jsonl')
+        rt  = AgentRuntime(db_path=db, log_path=log)
+
+        # Add a rule and seal
+        rt.policy_store.add_rule(
+            'r1', 'test rule', "scope != 'forbidden'"
+        )
+        seal_policy(rt.policy_store, log)
+        rt._recheck_policy_integrity()
+        assert rt.policy_mode == 'normal'
+
+        # Simulate attacker: delete rule directly via SQLite
+        conn = sqlite3.connect(db)
+        conn.execute("DELETE FROM policy_rules WHERE rule_id='r1'")
+        conn.commit()
+        conn.close()
+
+        # Integrity check must now fail
+        rt._recheck_policy_integrity()
+        assert rt.policy_mode == 'locked_down', \
+            'tampered policy table must trigger locked_down'
+        assert rt.policy_integrity_warning is not None
+
+Test 35 — Locked down mode skips DB rules, constitutional rules still run
+def test_35_locked_down_skips_db_rules():
+    """In locked_down mode: DB policy rules are skipped.
+    Constitutional rules (canon immutability) still enforce.
+    """
+    import tempfile, os, sqlite3
+    from cc.runtime import AgentRuntime
+    from cc.policy_store import seal_policy
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db  = os.path.join(tmp, 'test35.db')
+        log = os.path.join(tmp, 'test35.jsonl')
+        rt  = AgentRuntime(db_path=db, log_path=log)
+
+        # Add a DB rule that would block all core writes
+        rt.policy_store.add_rule(
+            'block_all', 'block everything', "scope != 'core'"
+        )
+        seal_policy(rt.policy_store, log)
+        rt._recheck_policy_integrity()
+
+        # Tamper: delete the rule to enter locked_down
+        conn = sqlite3.connect(db)
+        conn.execute("DELETE FROM policy_rules WHERE rule_id='block_all'")
+        conn.commit(); conn.close()
+        rt._recheck_policy_integrity()
+        assert rt.policy_mode == 'locked_down'
+
+        # In locked_down: DB rule is skipped — core write must COMMIT
+        result = rt.run_cycle(
+            plan={'action':'mem_store','unit_id':'u1','scope':'core',
+                  'tags':[],'body':{'summary':'test'}},
+            act_fn=lambda p: {**p}, invariants=[],
+        )
+        assert result == 'COMMIT', \
+            f'locked_down must skip DB rules: {result}'
+
+        # Constitutional rule still enforces: second canon write must FAIL
+        rt.run_cycle(
+            plan={'action':'mem_store','unit_id':'canon1','scope':'canon',
+                  'tags':[],'body':{'summary':'first'}},
+            act_fn=lambda p: {**p}, invariants=[],
+        )
+        result2 = rt.run_cycle(
+            plan={'action':'mem_store','unit_id':'canon1','scope':'canon',
+                  'tags':[],'body':{'summary':'overwrite'}},
+            act_fn=lambda p: {**p}, invariants=[],
+        )
+        assert result2 == 'FAIL', 'canon immutability must hold in locked_down'
+
+
+7. Existing Test Compatibility — Critical
+Tests 1–32 use AgentRuntime with policy rules in some cases.
+After this change, any AgentRuntime that uses add_policy_rule will start in
+locked_down mode on first instantiation (no POLICY_HASH receipt in log yet).
+
+Antigravity must audit tests 1–32 for any that:
+  (a) call add_policy_rule or rely on DB policy evaluation
+  (b) would now fail because policy_mode is locked_down
+
+Fix: add seal_policy(rt.policy_store, rt.log_path) + rt._recheck_policy_integrity()
+immediately after the policy rule is added in those tests.
+
+Tests that do not use policy rules are unaffected — they have no POLICY_HASH
+receipt but also never call _eval_policy_rules, so locked_down has no effect.
+
+If more than 2 tests need updating, stop and report. Do not patch blindly.
+
+
+8. Execution Order
+
+1
+Run existing suite — 32 passed. Touch nothing until confirmed.
+2
+Create cc/policy_store.py with PolicyStore ABC, SQLitePolicyStore, compute_hash, verify_policy_integrity, seal_policy.
+3
+Update AgentRuntime.__init__ to instantiate SQLitePolicyStore and run integrity check. Add policy_mode and policy_integrity_warning attributes.
+4
+Add _recheck_policy_integrity() helper to AgentRuntime.
+5
+Update _eval_policy_rules to short-circuit on locked_down.
+6
+Run existing suite. Identify which tests (if any) now fail due to locked_down. Fix only those tests by adding seal_policy + _recheck. If more than 2 break, abort and report.
+7
+Write Test 33 (seal and verify). Run alone. Confirm pass.
+8
+Write Test 34 (tamper detected). Run alone. Confirm pass.
+9
+Write Test 35 (locked_down behaviour). Run alone. Confirm pass.
+10
+Run full suite — 35 passed. Run stress harness — 31/31. Both clean.
+
+
+9. What This Does NOT Touch
+✗  Receipt chain format — frozen (POLICY_HASH is a new receipt type, not a schema change)
+✗  Hardcoded Verifier rules — frozen
+✗  KeyManager / identity.py — frozen
+✗  server.py / SessionContext — frozen
+✗  compact.py / snapshot logic — frozen
+✗  No new dependencies (hashlib, json, abc — all stdlib)
+
+
+Acceptance Criteria
+
+python3 -m pytest cc/tests/test_mvp.py -v
+# 35 passed, 0 warnings on new tests
+
+python3 stress_harness.py
+# 31/31 — 0 deferred
+
+Both commands clean. That is the only verdict.
+The policy table is no longer the open door.
+
+
+The fortress now protects its own rules.

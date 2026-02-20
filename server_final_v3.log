@@ -1,0 +1,92 @@
+INFO:     Will watch for changes in these directories: ['/home/burdens/compatible']
+INFO:     Uvicorn running on http://127.0.0.1:7078 (Press CTRL+C to quit)
+INFO:     Started reloader process [3181489] using StatReload
+INFO:     Started server process [3181497]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     127.0.0.1:43554 - "GET /api/llm/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43558 - "POST /api/llm/config HTTP/1.1" 200 OK
+[LOG] Appended rcpt_b3f0fdd3 | Log Head: b747165eb7f3...
+INFO:     127.0.0.1:43566 - "POST /api/ingest HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52850 - "GET /api/llm/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52860 - "POST /api/llm/config HTTP/1.1" 200 OK
+[LOG] Appended rcpt_b90f0fd0 | Log Head: 16893f142ff0...
+INFO:     127.0.0.1:52874 - "POST /api/ingest HTTP/1.1" 200 OK
+[LOG] Appended rcpt_812cd9d4 | Log Head: 2d0172d87ecd...
+INFO:     127.0.0.1:35742 - "POST /api/ingest HTTP/1.1" 200 OK
+[LOG] Appended rcpt_f1d16294 | Log Head: 375735617334...
+INFO:     127.0.0.1:47516 - "POST /api/ingest HTTP/1.1" 200 OK
+WARNING:  StatReload detected changes in 'cc/api.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [3181497]
+INFO:     Started server process [3184742]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     127.0.0.1:37444 - "HEAD / HTTP/1.1" 405 Method Not Allowed
+INFO:     127.0.0.1:37452 - "HEAD /ui/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50970 - "GET / HTTP/1.1" 307 Temporary Redirect
+INFO:     127.0.0.1:50974 - "GET /ui/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42828 - "GET /api/ollama/tags HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:49328 - "HEAD /ui/ HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49338 - "GET /ui/ HTTP/1.1" 200 OK
+WARNING:  StatReload detected changes in 'cc/api.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [3184742]
+INFO:     Started server process [3185170]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+WARNING:  StatReload detected changes in 'cc/api.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [3185170]
+Process SpawnProcess-4:
+Traceback (most recent call last):
+  File "/home/burdens/miniconda3/lib/python3.13/multiprocessing/process.py", line 313, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/home/burdens/miniconda3/lib/python3.13/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/burdens/miniconda3/lib/python3.13/site-packages/uvicorn/_subprocess.py", line 80, in subprocess_started
+    target(sockets=sockets)
+    ~~~~~~^^^^^^^^^^^^^^^^^
+  File "/home/burdens/miniconda3/lib/python3.13/site-packages/uvicorn/server.py", line 67, in run
+    return asyncio_run(self.serve(sockets=sockets), loop_factory=self.config.get_loop_factory())
+  File "/home/burdens/miniconda3/lib/python3.13/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "/home/burdens/miniconda3/lib/python3.13/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/home/burdens/miniconda3/lib/python3.13/asyncio/base_events.py", line 725, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/burdens/miniconda3/lib/python3.13/site-packages/uvicorn/server.py", line 71, in serve
+    await self._serve(sockets)
+  File "/home/burdens/miniconda3/lib/python3.13/site-packages/uvicorn/server.py", line 78, in _serve
+    config.load()
+    ~~~~~~~~~~~^^
+  File "/home/burdens/miniconda3/lib/python3.13/site-packages/uvicorn/config.py", line 439, in load
+    self.loaded_app = import_from_string(self.app)
+                      ~~~~~~~~~~~~~~~~~~^^^^^^^^^^
+  File "/home/burdens/miniconda3/lib/python3.13/site-packages/uvicorn/importer.py", line 19, in import_from_string
+    module = importlib.import_module(module_str)
+  File "/home/burdens/miniconda3/lib/python3.13/importlib/__init__.py", line 88, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 1019, in exec_module
+  File "<frozen importlib._bootstrap_external>", line 1157, in get_code
+  File "<frozen importlib._bootstrap_external>", line 1087, in source_to_code
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "/home/burdens/compatible/cc/api.py", line 210
+    <div class="row" style="margin:12px 0">
+IndentationError: unexpected indent

@@ -1,0 +1,8 @@
+INFO:     Will watch for changes in these directories: ['/home/burdens/compatible']
+INFO:     Uvicorn running on http://127.0.0.1:7078 (Press CTRL+C to quit)
+INFO:     Started reloader process [3187076] using StatReload
+INFO:     Started server process [3187084]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     127.0.0.1:52498 - "GET / HTTP/1.1" 307 Temporary Redirect
+INFO:     127.0.0.1:52508 - "GET /api/ollama/tags HTTP/1.1" 200 OK

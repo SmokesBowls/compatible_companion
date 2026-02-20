@@ -5,11 +5,13 @@ import uuid
 import os
 import pathlib
 import warnings
-from typing import Dict, Any, List, Optional
+import threading
+from typing import Dict, Any, List, Optional, Union
+from dataclasses import dataclass, field
 from .memory import MemoryStore
 from .zw_block import ZWBlock
-from .policy import eval_policy_predicate, PolicyRuleError
 from .identity import KeyManager, sign_payload
+from .policy_store import SQLitePolicyStore, verify_policy_integrity
 
 class Plan:
     def __init__(self, action: str, scope: str, rollback_anchor: Optional[str] = None, tool_refs: List[str] = None):
@@ -18,54 +20,79 @@ class Plan:
         self.rollback_anchor = rollback_anchor
         self.tool_refs = tool_refs or []
 
+@dataclass
+class SessionContext:
+    session_id: str
+    staged_units: List[Dict[str, Any]] = field(default_factory=list)
+    key_manager: Optional[Any] = None
+
 class AgentRuntime:
     """
     AgentRuntime (formerly CompanionRuntime) orchestrates the PLAN -> ACT -> VERIFY -> COMMIT cycle.
     """
-    def __init__(self, db_path: str = None, log_path: str = None, tool_allowlist: list[str] = None):
-        # ── PATH HARDENING (Week 6) ───────────────────────────────────
-        base_dir = pathlib.Path.home() / '.compatible'
+    def __init__(self, 
+                 memory: Optional[MemoryStore] = None, 
+                 log_path: str = None,
+                 key_manager: Optional[KeyManager] = None,
+                 tool_allowlist: List[str] = None,
+                 db_path: Optional[str] = None):
+        """
+        AgentRuntime (formerly CompanionRuntime) orchestrates the PLAN -> ACT -> VERIFY -> COMMIT cycle.
         
-        # Determine defaults
-        default_db = str(base_dir / 'companion.db')
-        default_log = str(base_dir / 'receipts.jsonl')
-        
-        # Test mode suppresses warnings and allows relative paths/memory
-        test_mode = os.environ.get('TEST_MODE') == '1'
-        
-        db_path = db_path or default_db
-        log_path = log_path or default_log
-        
-        if not test_mode:
-            if not os.path.isabs(db_path):
-                warnings.warn(f"Relative db_path '{db_path}' detected. Recommended: '{default_db}'", RuntimeWarning)
-            if not os.path.isabs(log_path):
-                warnings.warn(f"Relative log_path '{log_path}' detected. Recommended: '{default_log}'", RuntimeWarning)
-            # Ensure base directory exists in production
-            os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
-            os.makedirs(os.path.dirname(os.path.abspath(log_path)), exist_ok=True)
+        Args:
+            memory: A MemoryStore instance (e.g. SqliteMemoryStore).
+            log_path: Path to the receipt log file.
+            key_manager: A KeyManager instance for signing.
+            tool_allowlist: List of allowed tool hosts.
+            db_path: Legacy alias for memory. If provided and memory is None, 
+                    SqliteMemoryStore(db_path) will be used.
+        """
+        if memory is None and db_path is not None:
+            # Import here to avoid circular dependencies if any
+            from .memory import SqliteMemoryStore
+            self.memory = SqliteMemoryStore(db_path)
+        elif memory is not None:
+            self.memory = memory
+        else:
+            raise ValueError("Must provide either 'memory' or 'db_path'")
 
-        self.memory = MemoryStore(db_path)
-        self.db_path = db_path
-        self.mem_store = self.memory # Alias for briefing tests
+        self.log_path = log_path or "receipts.jsonl"
+        self.key_manager = key_manager
         self.tool_allowlist = list(tool_allowlist or [])
-        self._last_act_result = {}
-        self.log_path = log_path
         
-        # ── IDENTITY HARDENING (Week 6) ──────────────────────────────
-        self.key_manager = None
-        key_path = os.environ.get('CC_KEY_PATH') or str(base_dir / 'identity.key')
-        if os.path.exists(key_path):
-            self.key_manager = KeyManager(key_path)
-        elif os.path.exists('cc_identity.key'):
-            self.key_manager = KeyManager('cc_identity.key')
+        self.mem_store = self.memory # Alias for back-compat
+        self._last_act_result = {}
+        
         # Initial hash for an empty chain
         self.receipt_log_head = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         self._load_log_head()
         
         self.phase = "IDLE"
-        self.last_snapshot_id = None
         self.last_state_hash = None
+        
+        # P2: Freeze lock to prevent COMMIT during snapshot export
+        self._compact_lock = threading.Lock()
+
+        # ── POLICY INTEGRITY (Week 9.5) ──────────────────────────────
+        # We assume for now that memory has a .conn (SqliteMemoryStore)
+        if hasattr(self.memory, 'conn'):
+            self.policy_store = SQLitePolicyStore(self.memory.conn)
+        else:
+            self.policy_store = None
+
+        self.policy_mode = 'normal'
+        self.policy_integrity_warning = None
+        
+        if self.policy_store and os.path.exists(self.log_path):
+            integrity_ok, reason = verify_policy_integrity(self.policy_store, self.log_path)
+            if not integrity_ok:
+                self.policy_mode = 'locked_down'
+                self.policy_integrity_warning = reason
+                self._emit_receipt('POLICY_INTEGRITY_FAIL', error=reason)
+        elif self.policy_store:
+            # New log
+            self.policy_mode = 'locked_down'
+            self.policy_integrity_warning = 'policy set has never been sealed'
 
     def _load_log_head(self):
         """Loads the current chain tip from the JSONL log file."""
@@ -90,7 +117,7 @@ class AgentRuntime:
         """Returns the most recent committed state_hash."""
         return self.last_state_hash
 
-    def ingest(self, text: str, scope: str = "core") -> Dict[str, Any]:
+    def ingest(self, text: str, scope: str = "core", session_context: SessionContext = None) -> Dict[str, Any]:
         """
         Legacy wrapper for text input.
         """
@@ -113,13 +140,98 @@ class AgentRuntime:
                 'tags': []
             }
 
-        # run_cycle returns a verdict string for Test 14/15, 
-        # but ingest needs to return the receipt dict for Stage 1/2.
-        # I'll modify run_cycle to store the last receipt.
-        self.run_cycle(plan, act_fn, invariants=[])
+        self.run_cycle(plan, act_fn, invariants=[], session_context=session_context)
         return self.last_receipt
 
-    def run_cycle(self, plan: Dict[str, Any], act_fn, invariants: List = None) -> str:
+    def ingest_chat_turn(self, text: str, scope: str = "core", session_context: SessionContext = None) -> Dict[str, Any]:
+        """
+        Chat turn committed as one receipt:
+          - user unit
+          - assistant unit (Ollama)
+        Both are auditable and chained.
+        """
+        from .config import load_config
+        from .llm import OllamaBackend
+
+        cfg = load_config()
+        llm_cfg = (cfg.get("llm") or {})
+        base_url = llm_cfg.get("base_url", "http://127.0.0.1:11434")
+        model = llm_cfg.get("model", "llama3")
+        timeout_s = int(llm_cfg.get("timeout_s", 30))
+
+        backend_name = (llm_cfg.get("backend") or "ollama").lower()
+        if backend_name not in ("ollama", "local"):
+            # If someone sets backend to "none", fall back to single-unit ingest.
+            return self.ingest(text, scope=scope, session_context=session_context)
+
+        llm = OllamaBackend(base_url=base_url, model=model, timeout_s=timeout_s)
+
+        messages = [
+            {"role": "system", "content": "You are Compatible Companion. Be precise, local-first, and auditable."},
+            {"role": "user", "content": text},
+        ]
+        self.phase = "ACT"
+        res = llm.complete(messages)
+        tool_rcpt = llm.tool_receipt()
+
+        if not res.get("ok"):
+            # Fail the cycle (no DB write) instead of committing the error string.
+            err_type = res.get("error_type") or "llm_error"
+            err_detail = res.get("error_detail") or "unknown_llm_error"
+            self._emit_fail(
+                f"llm_call_failed: {err_type}", 
+                input_hash="llm_fail", 
+                session_context=session_context,
+                error_type=err_type,
+                error_detail=err_detail
+            )
+            return self.last_receipt
+
+        assistant_content = res.get("content", "")
+
+        plan = {
+            "action": "chat_turn",
+            "scope": scope,
+            "text": text,
+            "assistant_content": assistant_content,
+            "llm": {"backend": "ollama", "model": model, "base_url": base_url},
+        }
+
+        def act_fn(p):
+            user_unit_id = f"unit_{str(uuid.uuid4())[:8]}"
+            asst_unit_id = f"unit_{str(uuid.uuid4())[:8]}"
+
+            user_block = ZWBlock(p["text"])
+            asst_block = ZWBlock(p["assistant_content"])
+
+            return {
+                "units": [
+                    {
+                        "action": "mem_store",
+                        "unit_id": user_unit_id,
+                        "scope": p["scope"],
+                        "body": {"role": "user", "content": p["text"]},
+                        "body_hash": user_block.hash,
+                        "tags": ["chat", "user"],
+                        "content_type": "json",
+                    },
+                    {
+                        "action": "mem_store",
+                        "unit_id": asst_unit_id,
+                        "scope": p["scope"],
+                        "body": {"role": "assistant", "content": p["assistant_content"]},
+                        "body_hash": asst_block.hash,
+                        "tags": ["chat", "assistant"],
+                        "content_type": "json",
+                    },
+                ],
+                "tool_receipts": [tool_rcpt],
+            }
+
+        self.run_cycle(plan, act_fn, invariants=[], session_context=session_context)
+        return self.last_receipt
+
+    def run_cycle(self, plan: Dict[str, Any], act_fn, invariants: List = None, session_context: SessionContext = None) -> str:
         """
         Orchestrates PLAN -> ACT -> VERIFY -> COMMIT/FAIL.
         """
@@ -133,6 +245,9 @@ class AgentRuntime:
         act_result = act_fn(plan)
         self._last_act_result = act_result if isinstance(act_result, dict) else {}
         
+        # Use session context staged_units if available, else global ones
+        staged_units = session_context.staged_units if session_context else self.memory.staged_units
+
         # In MVP, if act_result is a unit or contains unit data, we stage it
         if isinstance(act_result, dict):
             if act_result.get('action') == 'mem_store' or 'unit_id' in act_result:
@@ -145,35 +260,38 @@ class AgentRuntime:
                     'tags':      act_result.get('tags', []),
                     'ttl_expires_at': act_result.get('ttl_expires_at')
                 }
-                self.memory.stage_unit(unit)
+                staged_units.append(unit)
             elif 'units' in act_result:
                 for u in act_result['units']:
-                    self.memory.stage_unit(u)
+                    # Normalize missing body_hash for batch units
+                    if 'body_hash' not in u and 'body' in u:
+                        u['body_hash'] = hashlib.sha256(json.dumps(u['body'], sort_keys=True).encode()).hexdigest()
+                    staged_units.append(u)
 
         # 3. VERIFY
         self.phase = "VERIFY"
         
         # 1. Canon immutability
-        error = self._verify_canon_immutability(self.memory.staged_units, self.memory.conn)
+        error = self._verify_canon_immutability(staged_units, self.memory.conn)
         if error:
-            return self._emit_fail(error, input_hash)
+            return self._emit_fail(error, input_hash, session_context)
 
         # 2. Tool receipt integrity (NEW)
         error = self._verify_tool_receipts(self._last_act_result, self.tool_allowlist)
         if error:
-            return self._emit_fail(error, input_hash)
+            return self._emit_fail(error, input_hash, session_context)
 
         # 3. Policy Rules
-        error = self._eval_policy_rules(self.memory.staged_units, self.memory.conn)
+        error = self._eval_policy_rules(staged_units, self.memory.conn)
         if error:
-            return self._emit_fail(error, input_hash)
+            return self._emit_fail(error, input_hash, session_context)
 
         # 4. COMMIT
         self.phase = "COMMIT"
         
-        # Capture staged units BEFORE commit_staged clears them
+        # Capture staged units BEFORE commit
         staged_copy = []
-        for u in self.memory.staged_units:
+        for u in staged_units:
             # Normalize to unit_id for the receipt data
             c = dict(u)
             if 'unit_id' not in c and 'id' in c:
@@ -182,54 +300,66 @@ class AgentRuntime:
 
         receipt_id = "rcpt_" + str(uuid.uuid4())[:8]
         snapshot_id = "snap_" + str(uuid.uuid4())[:8]
-        self.memory.commit_staged(receipt_id, snapshot_id)
         
-        state_hash = self.memory.derive_state_hash(self.receipt_log_head)
-        
-        receipt = {
-            "receipt_id": receipt_id,
-            "phase": "COMMIT",
-            "outcome": "COMMIT",  # Consistency
-            "verdict": "PASS",
-            "snapshot_id": snapshot_id,
-            "input_hash": input_hash,
-            "prev_receipt_hash": self.receipt_log_head,
-            "state_hash": state_hash,
-            "ts": int(time.time()),
-            # We store the unit data in the receipt for replayability in MVP
-            # "data": {"units": [u for u in self.memory.staged_units]} # staged_units is still there? 
-                                                                    # No, memory.py clears it.
-                                                                    # I should capture it before commit.
-        }
-        # Actually memory.py clear_staged happens AFTER insertion. 
-        # But for receipt data, I'll capture it.
-        receipt["data"] = {"units": staged_copy}
-        receipt["staged_units"] = staged_copy
-        receipt["tool_receipts"] = self._last_act_result.get('tool_receipts', [])
-        
-        self._append_to_log(receipt)
-        self.last_snapshot_id = snapshot_id
-        self.last_state_hash = state_hash
-        self.last_receipt = receipt
+        # COMMIT phase — must not run during snapshot export
+        with self._compact_lock:
+            # Commit to shared DB
+            if session_context:
+                self.memory.commit_staged(receipt_id, snapshot_id, units=staged_units)
+                session_context.staged_units = []
+            else:
+                self.memory.commit_staged(receipt_id, snapshot_id) # self.memory.staged_units cleared internally
+            
+            state_hash = self.memory.derive_state_hash(self.receipt_log_head)
+            
+            receipt = {
+                "receipt_id": receipt_id,
+                "phase": "COMMIT",
+                "outcome": "COMMIT",
+                "verdict": "PASS",
+                "snapshot_id": snapshot_id,
+                "input_hash": input_hash,
+                "prev_receipt_hash": self.receipt_log_head,
+                "state_hash": state_hash,
+                "ts": int(time.time()),
+                "data": {"units": staged_copy},
+                "staged_units": staged_copy,
+                "tool_receipts": self._last_act_result.get('tool_receipts', [])
+            }
+            
+            # SIGN
+            km = session_context.key_manager if session_context else self.key_manager
+            payload = json.dumps(receipt, sort_keys=True, separators=(',', ':')).encode()
+            if km:
+                receipt["sig_b64"] = km.sign(payload)
+            
+            self._append_to_log(receipt)
+            self.last_snapshot_id = snapshot_id
+            self.last_state_hash = state_hash
+            self.last_receipt = receipt
+            
         self.phase = "IDLE"
         return "COMMIT"
 
-    def _emit_fail(self, error_msg: str, input_hash: str) -> str:
+    def _emit_fail(self, error_msg: str, input_hash: str, session_context: SessionContext = None, error_type: str = None, error_detail: str = None) -> str:
         receipt_id = "rcpt_" + str(uuid.uuid4())[:8]
         receipt = {
             "receipt_id": receipt_id,
             "phase": self.phase,
             "verdict": "FAIL",
-            "outcome": "FAIL",    # Consistency
+            "outcome": "FAIL",
             "error": error_msg,
+            "error_type": error_type,
+            "error_detail": error_detail,
             "input_hash": input_hash,
             "prev_receipt_hash": self.receipt_log_head,
             "ts": int(time.time())
         }
-        # 5. SIGN (Deterministic if key available)
+        # 5. SIGN
+        km = session_context.key_manager if session_context else self.key_manager
         payload = json.dumps(receipt, sort_keys=True).encode()
-        if self.key_manager:
-            receipt["sig_b64"] = self.key_manager.sign(payload)
+        if km:
+            receipt["sig_b64"] = km.sign(payload)
         else:
             # Fallback to file-based legacy signing if manager not active
             try:
@@ -238,10 +368,33 @@ class AgentRuntime:
                 pass 
 
         self._append_to_log(receipt)
-        self.memory.clear_staged()
+        if session_context:
+            session_context.staged_units = []
+        else:
+            self.memory.clear_staged()
         self.last_receipt = receipt
         self.phase = "IDLE"
         return "FAIL"
+
+    def _emit_receipt(self, receipt_type: str, outcome: str = "FAIL", error: str = None):
+        """Helper to log a simple system receipt."""
+        receipt = {
+            "receipt_id": "rcpt_" + str(uuid.uuid4())[:8],
+            "type": receipt_type,
+            "outcome": outcome,
+            "error": error,
+            "policy_mode": getattr(self, 'policy_mode', 'unknown'),
+            "ts": int(time.time()),
+            "timestamp": int(time.time()), # Briefing used timestamp
+            "prev_receipt_hash": self.receipt_log_head
+        }
+        self._append_to_log(receipt)
+
+    def _recheck_policy_integrity(self):
+        """Re-run integrity check after sealing. Updates policy_mode in place."""
+        ok, reason = verify_policy_integrity(self.policy_store, self.log_path)
+        self.policy_mode = 'normal' if ok else 'locked_down'
+        self.policy_integrity_warning = None if ok else reason
 
     def close(self):
         """Shutdown session and zero key memory."""
@@ -282,15 +435,18 @@ class AgentRuntime:
         return None
 
     def _eval_policy_rules(self, staged_writes: list, db_conn) -> str | None:
-        """Evaluates active policy rules (sandboxed)."""
-        cursor = db_conn.cursor()
-        cursor.execute("SELECT rule_id, description, predicate FROM policy_rules WHERE is_active = 1")
-        rules = cursor.fetchall()
+        """Evaluates active policy rules (pure Python pattern matching). No eval."""
+        # If policy integrity check failed at startup, DB rules are untrusted.
+        # Only hardcoded constitutional rules apply.
+        if getattr(self, 'policy_mode', 'normal') == 'locked_down':
+            return None
+
+        from .policy_store import evaluate_rule
+        rules = self.policy_store.get_active_rules()
 
         for write in staged_writes:
             # Special case for body if it's still a string (Stage 1/2) 
             # vs dict (Week 3)
-            body = write.get('body')
             # The briefing unit_ctx uses body_hash, tags, scope
             unit_ctx = {
                 'scope':     write.get('scope', ''),
@@ -298,15 +454,26 @@ class AgentRuntime:
                 'body_hash': write.get('body_hash', ''),
                 'content_type': write.get('content_type', 'plain'),
                 'entities':  write.get('entities', []),
+                'unit_id':   write.get('unit_id'),
             }
-            for rule_id, description, predicate in rules:
+            # Also allow dot-access into body if it's a dict
+            if isinstance(write.get('body'), dict):
+                unit_ctx['body'] = write['body']
+
+            for rule_row in rules:
+                import json
                 try:
-                    if not eval_policy_predicate(predicate, unit_ctx):
-                        return f'policy_rule_violation: {rule_id}: {description}'
-                except PolicyRuleError as exc:
-                    return f'policy_rule_error: {rule_id}: {exc}'
+                    # check if predicate is a JSON string or already a dict
+                    pred = rule_row['predicate']
+                    if isinstance(pred, str) and pred.strip().startswith('{'):
+                        rule = json.loads(pred)
+                    else:
+                        return f"policy_rule_error: {rule_row['rule_id']}: legacy string predicate not supported"
+                    
+                    if not evaluate_rule(rule, unit_ctx):
+                        return f'policy_rule_violation: {rule_row.get("rule_id")}: {rule_row.get("description")}'
                 except Exception as exc:
-                    return f'policy_rule_evaluation_error: {rule_id}: {exc}'
+                    return f'policy_rule_evaluation_error: {rule_row.get("rule_id")}: {exc}'
         return None
 
     def apply_receipt(self, receipt: dict) -> None:
@@ -373,7 +540,7 @@ class AgentRuntime:
                 expected_prev = hashlib.sha256(receipt_bytes).hexdigest()
                 self.receipt_log_head = expected_prev
                 
-                if receipt["phase"] == "COMMIT" and receipt["verdict"] == "PASS":
+                if receipt.get("phase") == "COMMIT" and receipt.get("verdict") == "PASS":
                     self.apply_receipt(receipt)
                     self.last_snapshot_id = receipt["snapshot_id"]
                     print(f"[REPLAY] Applied {receipt['snapshot_id']} | State Hash: {self.last_state_hash[:12]}...")

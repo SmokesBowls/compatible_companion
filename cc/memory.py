@@ -1,14 +1,37 @@
+from typing import List, Dict, Any, Optional, Protocol, Iterable
 import sqlite3
 import hashlib
 import json
 import time
-from typing import List, Dict, Any, Optional
 
-class MemoryStore:
+class MemoryStore(Protocol):
+    def mem_store(self, unit_id: str, scope: str, body: Dict[str, Any], tags: List[str] = None, ttl_expires_at: str = None) -> str: ...
+    def stage_unit(self, unit: Dict[str, Any]): ...
+    def clear_staged(self): ...
+    def commit_staged(self, receipt_id: str, snapshot_id: str, units: List[Dict[str, Any]] = None): ...
+    def add_event(self, event: Dict[str, Any]): ...
+    def derive_state_hash(self, receipt_log_head: str) -> str: ...
+    def get_unit(self, unit_id: str) -> Optional[Dict[str, Any]]: ...
+    def mem_find(self, scope: str) -> List[Dict[str, Any]]: ...
+    def add_policy_rule(self, rule_id: str, description: str, predicate: str): ...
+    def get_policy_rules(self, scope: Optional[str] = None) -> List[Dict[str, Any]]: ...
+    def mem_store_zw(self, zw_text: str, unit_id: str, ttl_expires_at: str = None) -> str: ...
+    def get_provenance(self, scope: Optional[str] = None) -> List[Dict[str, Any]]: ...
+    def close(self): ...
+
+class SqliteMemoryStore:
     def __init__(self, db_path: str = ":memory:"):
         self.db_path = db_path
-        self.conn = sqlite3.connect(self.db_path)
+        # Increase timeout to 5s to avoid 'database is locked' on concurrent access
+        # check_same_thread=False allows run_in_executor (ThreadPool) to share the conn
+        self.conn = sqlite3.connect(self.db_path, timeout=5.0, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
+        
+        # ── CONCURRENCY HARDENING ──
+        # Enable Write-Ahead Logging for better concurrency
+        if db_path != ":memory:":
+            self.conn.execute("PRAGMA journal_mode=WAL;")
+            
         self._init_db()
         self.staged_units = []
 
@@ -87,11 +110,13 @@ class MemoryStore:
     def clear_staged(self):
         self.staged_units = []
 
-    def commit_staged(self, receipt_id: str, snapshot_id: str):
-        """Promotes staged units to the units table."""
+    def commit_staged(self, receipt_id: str, snapshot_id: str, units: List[Dict[str, Any]] = None):
+        """Promotes units to the units table. Uses self.staged_units if units is None."""
         cursor = self.conn.cursor()
         ts = int(time.time())
-        for unit in self.staged_units:
+        target_units = units if units is not None else self.staged_units
+        
+        for unit in target_units:
             # Check for existing unit to record proper op in provenance
             uid = unit.get('unit_id') or unit.get('id')
             cursor.execute("SELECT body_hash FROM units WHERE unit_id = ?", (uid,))
@@ -118,7 +143,8 @@ class MemoryStore:
                   ts, op))
         
         self.conn.commit()
-        self.clear_staged()
+        if units is None:
+            self.clear_staged()
 
     def add_event(self, event: Dict[str, Any]):
         cursor = self.conn.cursor()

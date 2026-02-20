@@ -6,7 +6,7 @@ import nacl.exceptions
 import sqlite3
 import os
 from .identity import sign_payload, verify_payload
-from .memory import MemoryStore
+from .memory import MemoryStore, SqliteMemoryStore
 
 class CapsuleIO:
     """
@@ -167,7 +167,7 @@ def export_capsule(db_path: str, capsule_path: str, key_manager=None, log_head=N
     """Standalone export for tests and CLI."""
     class MockRuntime:
         def __init__(self, db_path, key_manager=None, log_head=None):
-            self.memory = MemoryStore(db_path)
+            self.memory = SqliteMemoryStore(db_path)
             self.db_path = db_path
             self.receipt_log_head = log_head or "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
             self.tool_allowlist = []
@@ -222,7 +222,7 @@ def import_capsule(capsule_path: str, db_path: str, key_manager=None, conflict_s
 
     class MockRuntime:
         def __init__(self, db_path, key_manager=None):
-            self.memory = MemoryStore(db_path)
+            self.memory = SqliteMemoryStore(db_path)
             self.tool_allowlist = []
             self.key_manager = key_manager
             

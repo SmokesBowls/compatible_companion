@@ -12,7 +12,9 @@ def run_demo():
     if os.path.exists(db_path): os.remove(db_path)
 
     print("=== SESSION 1: Initializing and Ingesting ===")
-    rt1 = CompanionRuntime(db_path, log_path)
+    from cc.memory import SqliteMemoryStore
+    mem1 = SqliteMemoryStore(db_path)
+    rt1 = CompanionRuntime(memory=mem1, log_path=log_path)
     rt1.ingest("User Name: Alice")
     rt1.ingest("User Role: Architect")
     final_hash1 = rt1.last_state_hash
@@ -23,7 +25,8 @@ def run_demo():
 
     print("\n=== SESSION 2: Replaying log into a clean runtime ===")
     # Notice we don't use the DB from Session 1
-    rt2 = CompanionRuntime(":memory:", log_path) 
+    mem2 = SqliteMemoryStore(":memory:")
+    rt2 = CompanionRuntime(memory=mem2, log_path=log_path) 
     rt2.replay_log(log_path)
     final_hash2 = rt2.last_state_hash
     rt2.close()
@@ -52,7 +55,8 @@ def run_demo():
             
         print(f"Corrupted log created at {corrupted_log}")
         
-        rt3 = CompanionRuntime(":memory:", corrupted_log)
+        mem3 = SqliteMemoryStore(":memory:")
+        rt3 = CompanionRuntime(memory=mem3, log_path=corrupted_log)
         try:
             rt3.replay_log(corrupted_log)
             print("FAILURE: Replay should have failed!")

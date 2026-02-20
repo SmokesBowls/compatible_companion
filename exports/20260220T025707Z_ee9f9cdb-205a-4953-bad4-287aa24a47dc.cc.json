@@ -1,0 +1,342 @@
+{
+  "capsule_id": "ee9f9cdb-205a-4953-bad4-287aa24a47dc",
+  "capsule_series_uuid": "77966353-5481-41e7-bc47-fe272c017a52",
+  "prev_capsule_hash": null,
+  "exported_at": "2026-02-20T02:57:07.836138+00:00",
+  "agent_id": "agent-x",
+  "log_chain_head": "375735617334968dbb6423d317c495aac28778892a5362ba65f5a6cb9ed33524",
+  "log_head": "375735617334968dbb6423d317c495aac28778892a5362ba65f5a6cb9ed33524",
+  "memory_units": [
+    {
+      "unit_id": "3739c0e8",
+      "scope": "core",
+      "body": {
+        "summary": "This is a product layer test"
+      },
+      "tags": [
+        "product",
+        "cli"
+      ],
+      "body_hash": "c6bbcb067d1d644aa1837df1998d9fca9d5ee0cdbdb9bbce356f8b0a05219223",
+      "ttl_expires_at": null,
+      "created_at": 1771531686
+    },
+    {
+      "unit_id": "unit_3023c9fc",
+      "scope": "core",
+      "body": "hi",
+      "tags": [],
+      "body_hash": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+      "ttl_expires_at": null,
+      "created_at": 1771538736
+    },
+    {
+      "unit_id": "unit_ec60aea6",
+      "scope": "core",
+      "body": {
+        "role": "user",
+        "content": "Hello companion!"
+      },
+      "tags": [
+        "chat",
+        "user"
+      ],
+      "body_hash": "4e446b34d742d1c622e5e25af919d5f586d1eaf1623e7aa6986dbdd11c75922a",
+      "ttl_expires_at": null,
+      "created_at": 1771539412
+    },
+    {
+      "unit_id": "unit_9a6b7918",
+      "scope": "core",
+      "body": {
+        "role": "assistant",
+        "content": "(ollama_error: HTTPError: HTTP Error 404: Not Found)"
+      },
+      "tags": [
+        "chat",
+        "assistant"
+      ],
+      "body_hash": "6e2d9e5d77b92bf9fee8812e345272743ad6761aecac3eb43b81f7d3bfe9bd51",
+      "ttl_expires_at": null,
+      "created_at": 1771539412
+    },
+    {
+      "unit_id": "unit_8124ba45",
+      "scope": "core",
+      "body": {
+        "role": "user",
+        "content": "hi"
+      },
+      "tags": [
+        "chat",
+        "user"
+      ],
+      "body_hash": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+      "ttl_expires_at": null,
+      "created_at": 1771540508
+    },
+    {
+      "unit_id": "unit_65afac86",
+      "scope": "core",
+      "body": {
+        "role": "assistant",
+        "content": "(ollama_error: HTTPError: HTTP Error 404: Not Found)"
+      },
+      "tags": [
+        "chat",
+        "assistant"
+      ],
+      "body_hash": "6e2d9e5d77b92bf9fee8812e345272743ad6761aecac3eb43b81f7d3bfe9bd51",
+      "ttl_expires_at": null,
+      "created_at": 1771540508
+    },
+    {
+      "unit_id": "unit_4cd12ab7",
+      "scope": "core",
+      "body": {
+        "role": "user",
+        "content": "hi"
+      },
+      "tags": [
+        "chat",
+        "user"
+      ],
+      "body_hash": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+      "ttl_expires_at": null,
+      "created_at": 1771540524
+    },
+    {
+      "unit_id": "unit_3e6cf8e3",
+      "scope": "core",
+      "body": {
+        "role": "assistant",
+        "content": "(ollama_error: HTTPError: HTTP Error 404: Not Found)"
+      },
+      "tags": [
+        "chat",
+        "assistant"
+      ],
+      "body_hash": "6e2d9e5d77b92bf9fee8812e345272743ad6761aecac3eb43b81f7d3bfe9bd51",
+      "ttl_expires_at": null,
+      "created_at": 1771540524
+    },
+    {
+      "unit_id": "unit_b9f87fe4",
+      "scope": "core",
+      "body": {
+        "role": "user",
+        "content": "hi"
+      },
+      "tags": [
+        "chat",
+        "user"
+      ],
+      "body_hash": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+      "ttl_expires_at": null,
+      "created_at": 1771540823
+    },
+    {
+      "unit_id": "unit_fca88d65",
+      "scope": "core",
+      "body": {
+        "role": "assistant",
+        "content": "(ollama_error: HTTPError: HTTP Error 404: Not Found)"
+      },
+      "tags": [
+        "chat",
+        "assistant"
+      ],
+      "body_hash": "6e2d9e5d77b92bf9fee8812e345272743ad6761aecac3eb43b81f7d3bfe9bd51",
+      "ttl_expires_at": null,
+      "created_at": 1771540823
+    },
+    {
+      "unit_id": "unit_7fcb3ba2",
+      "scope": "core",
+      "body": {
+        "role": "user",
+        "content": "allowlist test"
+      },
+      "tags": [
+        "chat",
+        "user"
+      ],
+      "body_hash": "5b8260ac237178d552a2ba184f50077f39f372455d192d8950c068acd33a86d5",
+      "ttl_expires_at": null,
+      "created_at": 1771540851
+    },
+    {
+      "unit_id": "unit_cdd54a47",
+      "scope": "core",
+      "body": {
+        "role": "assistant",
+        "content": "(ollama_error: HTTPError: HTTP Error 404: Not Found)"
+      },
+      "tags": [
+        "chat",
+        "assistant"
+      ],
+      "body_hash": "6e2d9e5d77b92bf9fee8812e345272743ad6761aecac3eb43b81f7d3bfe9bd51",
+      "ttl_expires_at": null,
+      "created_at": 1771540851
+    },
+    {
+      "unit_id": "unit_343bd77f",
+      "scope": "core",
+      "body": {
+        "role": "user",
+        "content": "hi"
+      },
+      "tags": [
+        "chat",
+        "user"
+      ],
+      "body_hash": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+      "ttl_expires_at": null,
+      "created_at": 1771544402
+    },
+    {
+      "unit_id": "unit_1000adc4",
+      "scope": "core",
+      "body": {
+        "role": "assistant",
+        "content": "Hello! How can I help you today?"
+      },
+      "tags": [
+        "chat",
+        "assistant"
+      ],
+      "body_hash": "fda564ba3f7a0f028106d468420f674898ed99ac5bf2765ac9586206e39d73c5",
+      "ttl_expires_at": null,
+      "created_at": 1771544402
+    },
+    {
+      "unit_id": "unit_61e77e04",
+      "scope": "core",
+      "body": {
+        "role": "user",
+        "content": "hi"
+      },
+      "tags": [
+        "chat",
+        "user"
+      ],
+      "body_hash": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+      "ttl_expires_at": null,
+      "created_at": 1771545022
+    },
+    {
+      "unit_id": "unit_c88366ce",
+      "scope": "core",
+      "body": {
+        "role": "assistant",
+        "content": "Hello! How can I assist you today?"
+      },
+      "tags": [
+        "chat",
+        "assistant"
+      ],
+      "body_hash": "cd153d3c18e782c4f4b3ceec574adccc8e68bc557110b0bc263b01e09bfcc8ef",
+      "ttl_expires_at": null,
+      "created_at": 1771545022
+    },
+    {
+      "unit_id": "unit_4e5040b2",
+      "scope": "core",
+      "body": {
+        "role": "user",
+        "content": "hi"
+      },
+      "tags": [
+        "chat",
+        "user"
+      ],
+      "body_hash": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+      "ttl_expires_at": null,
+      "created_at": 1771545030
+    },
+    {
+      "unit_id": "unit_4f31d30c",
+      "scope": "core",
+      "body": {
+        "role": "assistant",
+        "content": "Hello! How can I help you today?"
+      },
+      "tags": [
+        "chat",
+        "assistant"
+      ],
+      "body_hash": "fda564ba3f7a0f028106d468420f674898ed99ac5bf2765ac9586206e39d73c5",
+      "ttl_expires_at": null,
+      "created_at": 1771545030
+    },
+    {
+      "unit_id": "unit_04c1703a",
+      "scope": "core",
+      "body": {
+        "role": "user",
+        "content": "hi"
+      },
+      "tags": [
+        "chat",
+        "user"
+      ],
+      "body_hash": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+      "ttl_expires_at": null,
+      "created_at": 1771545040
+    },
+    {
+      "unit_id": "unit_4d60b228",
+      "scope": "core",
+      "body": {
+        "role": "assistant",
+        "content": "Hello! I'm here to assist you with any task or question you have. Please provide me with the details of what information you're looking for, and I'll do my best to help."
+      },
+      "tags": [
+        "chat",
+        "assistant"
+      ],
+      "body_hash": "d039df33b5aefc28515c2407edc6a44c45b3cc3eeed03408068bc554af92e4ac",
+      "ttl_expires_at": null,
+      "created_at": 1771545040
+    },
+    {
+      "unit_id": "unit_ca479632",
+      "scope": "core",
+      "body": {
+        "role": "user",
+        "content": "hi"
+      },
+      "tags": [
+        "chat",
+        "user"
+      ],
+      "body_hash": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+      "ttl_expires_at": null,
+      "created_at": 1771545486
+    },
+    {
+      "unit_id": "unit_5a689658",
+      "scope": "core",
+      "body": {
+        "role": "assistant",
+        "content": "Hello! How can I assist you today? Please provide specific details or instructions for a more accurate response."
+      },
+      "tags": [
+        "chat",
+        "assistant"
+      ],
+      "body_hash": "d3c8e5ffda12c0459619c2eca9256b63cf43b987362b572b3b4a152b6526e5a7",
+      "ttl_expires_at": null,
+      "created_at": 1771545486
+    }
+  ],
+  "policy": {
+    "tool_allowlist": [
+      "127.0.0.1",
+      "localhost"
+    ]
+  },
+  "public_key": "wWQ+/pdLIZMyvNtlqW4BLVUSpXu9Q0RoJtd7I2kOIEU=",
+  "signature": "53rRLIhMvN0spyiCKxEYjAzWIPSi4qHXurEbANgYdGDIBi2p2Xqu5TI389LXrE8QQ7bdYvIYtKeKqSwAeX/9AQ=="
+}

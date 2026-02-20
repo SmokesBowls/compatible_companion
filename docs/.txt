@@ -1,0 +1,925 @@
+﻿COMPATIBLE COMPANION
+Weeks 11 & 12 — Combined Briefing
+From: Claude (Architecture Lead)  ·  To: Antigravity (Implementation Lead)
+Full editorial + self-testing authority granted
+WEEK 11
+Harden the Engine
+Replace eval · TLS · Per-client identity
+Tests 40–42 · Harness 34/34
+WEEK 12
+The Product Layer
+CLI · Daemon · Onboarding
+Tests 43–45 · Harness 35/35
+
+
+
+0. Frozen Stack — Do Not Touch
+39 tests. 31/31 harness. Everything below is locked. Build above it only.
+
+✓
+39 pytest tests
+0 failures · 0 warnings on new tests
+✓
+31/31 stress harness
+0 deferred · all adversarial checks passing
+✓
+State machine
+PLAN→ACT→VERIFY→COMMIT · chained SHA3-256 · deterministic replay
+✓
+Ed25519 + capsules
+bytearray key · zero on close · signed export/import · tamper caught
+✓
+PolicyStore + integrity
+Hash-bound to receipt chain · locked_down on tamper · seal_policy
+✓
+Session isolation
+Singleton runtime · SessionContext · _compact_lock freeze
+✓
+TCP transport + auth
+asyncio.Event sync · shared-secret handshake · wrong token rejected
+✓
+Async MCP adapter
+run_in_executor · semantic API · batch_store · policy_status
+✓
+Snapshot checkpointing
+Atomic freeze · explicit paths · O(recent) startup · audit intact
+
+
+WEEK 11
+Harden the Engine
+
+1. Week 11 Overview
+Three security hardening items. None require new dependencies except ssl (stdlib) and cffi/PyNaCl (already installed for Ed25519). The AST whitelist sandboxed eval — it was always the last known gap. Week 11 closes it. TLS and per-client identity make the TCP layer production-grade.
+
+#
+Proof
+Acceptance criterion
+Files
+P1
+Data-driven rule engine
+eval removed entirely from the policy evaluator. Rules are structured dicts with field/operator/value. Evaluation is a Python function that pattern-matches on operator type. No string execution possible.
+policy_store.py + runtime.py
+P2
+TLS on TCP
+start_tcp_server accepts optional ssl_context. Server wraps asyncio with TLS. Clients that do not present TLS are dropped at the socket level. Self-signed cert for dev, real cert path for prod.
+server.py
+P3
+Per-client Ed25519 identity
+Shared secret replaced with public key auth. Server maintains an allowlist of trusted client public keys. Handshake requires client to sign a challenge with its private key. Separate audit trail per client.
+server.py + identity.py
+
+
+2. W11-P1 — Data-Driven Rule Engine
+The AST whitelist blocked known injection vectors. But eval is still eval — a Python string executing in a Python interpreter. The only complete fix is to never call eval. Replace string predicates with structured rule objects and a pure-Python evaluator.
+
+2.1 New rule schema
+# Rule stored in policy_rules table — predicate column now holds JSON
+# Old format (string, eval'd):
+#   predicate: "scope != 'forbidden'"
+#
+# New format (structured JSON, never eval'd):
+{
+  "field":    "scope",
+  "operator": "neq",
+  "value":    "forbidden"
+}
+
+# Compound rule (AND of conditions):
+{
+  "all": [
+    {"field": "scope",  "operator": "neq",        "value": "forbidden"},
+    {"field": "tags",   "operator": "min_length", "value": 1}
+  ]
+}
+
+2.2 Supported operators
+Operator
+Meaning
+Example
+eq
+field equals value
+{"field":"scope","operator":"eq","value":"core"}
+neq
+field does not equal value
+{"field":"scope","operator":"neq","value":"forbidden"}
+contains
+field (string/list) contains value
+{"field":"tags","operator":"contains","value":"urgent"}
+not_contains
+field does not contain value
+{"field":"body","operator":"not_contains","value":"forbidden"}
+min_length
+len(field) >= value
+{"field":"tags","operator":"min_length","value":1}
+max_length
+len(field) <= value
+{"field":"body","operator":"max_length","value":1000}
+exists
+field key is present in unit
+{"field":"unit_id","operator":"exists"}
+prefix
+field starts with value
+{"field":"unit_id","operator":"prefix","value":"sys_"}
+all
+all sub-rules must pass (AND)
+{"all": [...rules]}
+any
+at least one sub-rule must pass (OR)
+{"any": [...rules]}
+
+2.3 Evaluator — add to cc/policy_store.py
+# cc/policy_store.py — add below existing code
+
+def evaluate_rule(rule: dict, unit: dict) -> bool:
+    """
+    Pure Python rule evaluator. No eval. No exec. No string execution.
+    Takes a structured rule dict and a unit dict.
+    Returns True if the rule passes (unit is allowed).
+    """
+    op = rule.get('operator')
+
+    # Compound operators
+    if op is None and 'all' in rule:
+        return all(evaluate_rule(r, unit) for r in rule['all'])
+    if op is None and 'any' in rule:
+        return any(evaluate_rule(r, unit) for r in rule['any'])
+
+    field = rule.get('field')
+    value = rule.get('value')
+
+    # Resolve field from unit (support dot notation for body fields)
+    def resolve(u, f):
+        parts = f.split('.')
+        cur = u
+        for part in parts:
+            if isinstance(cur, dict):
+                cur = cur.get(part)
+            else:
+                return None
+        return cur
+
+    fval = resolve(unit, field) if field else None
+
+    if op == 'eq':          return fval == value
+    if op == 'neq':         return fval != value
+    if op == 'exists':      return fval is not None
+    if op == 'contains':    return value in fval if fval is not None else False
+    if op == 'not_contains':return value not in fval if fval is not None else True
+    if op == 'min_length':  return len(fval) >= value if fval is not None else False
+    if op == 'max_length':  return len(fval) <= value if fval is not None else True
+    if op == 'prefix':      return str(fval).startswith(value) if fval is not None else False
+
+    raise ValueError(f'Unknown operator: {op}')
+
+2.4 Update runtime.py — _eval_policy_rules
+# In cc/runtime.py — replace _eval_policy_rules
+# Remove all AST/eval logic. Import evaluate_rule instead.
+
+from cc.policy_store import evaluate_rule
+
+def _eval_policy_rules(self, staged_writes):
+    if self.policy_mode == 'locked_down':
+        return None
+
+    rules = self.policy_store.get_active_rules()
+    for unit in staged_writes:
+        for rule_row in rules:
+            import json
+            try:
+                rule = json.loads(rule_row['predicate'])
+            except (json.JSONDecodeError, TypeError):
+                # Legacy string predicate — reject it, do not eval
+                return f"rule {rule_row['rule_id']}: legacy string predicate not supported"
+            if not evaluate_rule(rule, unit):
+                return f"rule {rule_row['rule_id']} blocked unit {unit.get('unit_id')}"
+    return None
+
+Migration note: existing tests that use string predicates (e.g. "'forbidden' not in body")
+must be updated to use the JSON rule format before running the suite.
+Antigravity: audit tests 14 and 15 specifically — they add policy rules.
+Convert their predicates to the new schema. If more than 3 tests need updating, report back.
+
+2.5 Acceptance Test (Test 40)
+def test_40_data_driven_rule_engine():
+    """eval is gone. Structured rules evaluate correctly.
+    Injection attempt via rule predicate is impossible by construction.
+    """
+    import tempfile, os, json
+    from cc.runtime import AgentRuntime
+    from cc.policy_store import seal_policy, evaluate_rule
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db  = os.path.join(tmp,'t.db')
+        log = os.path.join(tmp,'r.jsonl')
+        rt  = AgentRuntime(db_path=db, log_path=log)
+
+        # Add a structured rule: scope must not be 'forbidden'
+        rt.policy_store.add_rule(
+            'no_forbidden',
+            'block forbidden scope',
+            json.dumps({'field':'scope','operator':'neq','value':'forbidden'})
+        )
+        seal_policy(rt.policy_store, log)
+        rt._recheck_policy_integrity()
+
+        # Allowed write
+        result = rt.run_cycle(
+            plan={'action':'mem_store','unit_id':'u1','scope':'core',
+                  'tags':[],'body':{'summary':'ok'}},
+            act_fn=lambda p:{**p}, invariants=[])
+        assert result == 'COMMIT', f'allowed write must COMMIT: {result}'
+
+        # Blocked write
+        result2 = rt.run_cycle(
+            plan={'action':'mem_store','unit_id':'u2','scope':'forbidden',
+                  'tags':[],'body':{'summary':'bad'}},
+            act_fn=lambda p:{**p}, invariants=[])
+        assert result2 == 'FAIL', f'forbidden scope must FAIL: {result2}'
+
+        # Injection attempt — a rule predicate that looks like code
+        # This must raise ValueError (unknown operator) not execute
+        evil_rule = {'operator': '__import__("os").system("rm -rf /")',
+                     'field': 'scope', 'value': 'core'}
+        try:
+            evaluate_rule(evil_rule, {'scope':'core'})
+            assert False, 'evil operator must raise ValueError'
+        except ValueError:
+            pass  # correct — operator not in whitelist
+
+
+3. W11-P2 — TLS on TCP
+The TCP server currently runs plaintext. Anyone on the network can read or replay traffic. TLS wraps the socket — clients that do not negotiate TLS are dropped before the auth handshake. For development, a self-signed cert. For production, the cert path is passed at server startup.
+
+3.1 server.py — ssl_context parameter
+# In cc/server.py — update start_tcp_server
+import ssl
+
+async def start_tcp_server(rt, key_manager,
+                            host='127.0.0.1', port=7700,
+                            token: str = None,
+                            ssl_context=None):
+    if token is None:
+        raise ValueError('token is required.')
+    server = await asyncio.start_server(
+        lambda r, w: _handle_client(
+            rt, None, r, w, token,
+            rt.db_path, rt.log_path, key_manager
+        ),
+        host, port,
+        ssl=ssl_context   # None = plaintext (dev), SSLContext = TLS (prod)
+    )
+    if hasattr(server, '_start_event'):
+        server._start_event.set()
+    async with server:
+        await server.serve_forever()
+
+# Helper — generate a self-signed cert for testing
+def make_dev_ssl_context(certfile: str, keyfile: str) -> ssl.SSLContext:
+    """
+    Creates a server-side SSLContext from a self-signed cert.
+    Generate with: openssl req -x509 -newkey rsa:2048 -keyout key.pem
+                           -out cert.pem -days 365 -nodes -subj '/CN=localhost'
+    """
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.load_cert_chain(certfile, keyfile)
+    return ctx
+
+3.2 Acceptance Test (Test 41)
+def test_41_tls_server():
+    """TLS server accepts TLS clients. Plaintext clients fail at socket level."""
+    import asyncio, ssl, tempfile, os, json, subprocess
+    from cc.runtime import AgentRuntime
+    from cc.identity import generate_keypair, KeyManager
+    from cc.server import start_tcp_server, make_dev_ssl_context
+    from cc.policy_store import seal_policy
+    import shutil
+
+    async def run():
+        with tempfile.TemporaryDirectory() as tmp:
+            # Generate self-signed cert
+            cert = os.path.join(tmp, 'cert.pem')
+            key  = os.path.join(tmp, 'key.pem')
+            subprocess.run([
+                'openssl','req','-x509','-newkey','rsa:2048',
+                '-keyout', key, '-out', cert,
+                '-days','1','-nodes','-subj','/CN=localhost'
+            ], check=True, capture_output=True)
+
+            generate_keypair()
+            km = KeyManager(shutil.copy2('cc_identity.key',
+                            os.path.join(tmp,'id.key')))
+            rt = AgentRuntime(db_path=os.path.join(tmp,'s.db'),
+                              log_path=os.path.join(tmp,'r.jsonl'))
+            seal_policy(rt.policy_store, rt.log_path)
+            rt._recheck_policy_integrity()
+
+            ssl_ctx = make_dev_ssl_context(cert, key)
+            started = asyncio.Event()
+            task = asyncio.create_task(
+                start_tcp_server(rt, km, host='127.0.0.1', port=7720,
+                                 token='tls-test', ssl_context=ssl_ctx,
+                                 start_event=started))
+            await started.wait()
+
+            # TLS client — must succeed
+            client_ctx = ssl.create_default_context()
+            client_ctx.load_verify_locations(cert)
+            r, w = await asyncio.open_connection(
+                '127.0.0.1', 7720, ssl=client_ctx,
+                server_hostname='localhost')
+            w.write((json.dumps({'auth':'tls-test'})+'\n').encode())
+            await w.drain()
+            resp = json.loads((await r.readline()).decode())
+            assert resp['ok'], f'TLS client must auth: {resp}'
+            w.close(); await w.wait_closed()
+
+            # Plaintext client — must fail at TLS handshake
+            try:
+                r2, w2 = await asyncio.open_connection('127.0.0.1', 7720)
+                w2.write(b'plaintext\n')
+                await w2.drain()
+                await r2.readline()
+                assert False, 'plaintext client must fail'
+            except Exception:
+                pass  # correct
+
+            task.cancel()
+            try: await task
+            except asyncio.CancelledError: pass
+
+    asyncio.run(run())
+
+
+4. W11-P3 — Per-Client Ed25519 Identity
+The shared secret gives binary access — you either have the token or you don't. Per-client identity gives each client a named, auditable identity. The server maintains a trusted public key allowlist. The handshake is a challenge-response: server sends a random nonce, client signs it with its private key, server verifies with the stored public key.
+
+4.1 Protocol change — challenge-response handshake
+# New handshake replacing shared-secret auth
+#
+# Step 1 — Client sends its client_id (name) and public key:
+# {"hello": "my-agent", "vk": "<base64-ed25519-public-key>"}
+#
+# Step 2 — Server checks vk against allowlist.
+#          If trusted, sends a random challenge:
+# {"challenge": "<32-byte-hex-nonce>"}
+#
+# Step 3 — Client signs the challenge with its private key:
+# {"signature": "<base64-ed25519-signature>"}
+#
+# Step 4 — Server verifies signature with stored vk.
+#          On success:
+# {"ok": true, "session_id": "<uuid4>", "client_id": "my-agent"}
+#          On failure:
+# {"ok": false, "error": "unauthorized"}  then close.
+
+4.2 server.py — client allowlist
+# In cc/server.py
+import os, secrets
+from cc.identity import verify_payload
+
+# Server startup — pass client allowlist
+async def start_tcp_server(rt, key_manager,
+                            host='127.0.0.1', port=7700,
+                            token: str = None,        # kept for backward compat
+                            ssl_context=None,
+                            client_keys: dict = None, # {'agent-name': 'vk_b64'}
+                            start_event=None):
+    ...
+
+async def _handle_client(rt, reader, writer, token, db_path,
+                          log_path, key_manager, client_keys):
+    line = await reader.readline()
+    try:
+        req = json.loads(line.decode())
+    except Exception:
+        writer.close(); await writer.wait_closed(); return
+
+    # Legacy shared-secret path (backward compat)
+    if 'auth' in req and client_keys is None:
+        if req['auth'] != token:
+            writer.write((json.dumps({'ok':False,'error':'unauthorized'})+'\n').encode())
+            await writer.drain()
+            writer.close(); await writer.wait_closed(); return
+        # proceed to session
+
+    # Per-client identity path
+    elif 'hello' in req and client_keys is not None:
+        client_id = req.get('hello')
+        vk_b64    = req.get('vk')
+        if client_id not in client_keys or client_keys[client_id] != vk_b64:
+            writer.write((json.dumps({'ok':False,'error':'unauthorized'})+'\n').encode())
+            await writer.drain()
+            writer.close(); await writer.wait_closed(); return
+        # Issue challenge
+        nonce = secrets.token_hex(32)
+        writer.write((json.dumps({'challenge': nonce})+'\n').encode())
+        await writer.drain()
+        # Await signature
+        sig_line = await reader.readline()
+        sig_req  = json.loads(sig_line.decode())
+        sig_b64  = sig_req.get('signature')
+        try:
+            verify_payload(nonce.encode(), sig_b64, vk_b64)
+        except Exception:
+            writer.write((json.dumps({'ok':False,'error':'unauthorized'})+'\n').encode())
+            await writer.drain()
+            writer.close(); await writer.wait_closed(); return
+    else:
+        writer.close(); await writer.wait_closed(); return
+
+    session_id = str(uuid.uuid4())
+    writer.write((json.dumps({'ok':True,'session_id':session_id})+'\n').encode())
+    await writer.drain()
+    # ... rest of session loop unchanged ...
+
+4.3 Acceptance Test (Test 42)
+def test_42_per_client_identity():
+    """Known client authenticates via challenge-response.
+    Unknown client (not in allowlist) is rejected.
+    """
+    import asyncio, json, tempfile, os
+    from cc.runtime import AgentRuntime
+    from cc.identity import generate_keypair, KeyManager
+    from cc.server import start_tcp_server
+    from cc.policy_store import seal_policy
+    import shutil, base64
+    import nacl.signing
+
+    async def run():
+        with tempfile.TemporaryDirectory() as tmp:
+            # Server identity
+            generate_keypair()
+            km = KeyManager(shutil.copy2('cc_identity.key',
+                            os.path.join(tmp,'id.key')))
+            rt = AgentRuntime(db_path=os.path.join(tmp,'s.db'),
+                              log_path=os.path.join(tmp,'r.jsonl'))
+            seal_policy(rt.policy_store, rt.log_path)
+            rt._recheck_policy_integrity()
+
+            # Known client keypair
+            sk = nacl.signing.SigningKey.generate()
+            vk_b64 = base64.b64encode(bytes(sk.verify_key)).decode()
+            client_keys = {'trusted-agent': vk_b64}
+
+            started = asyncio.Event()
+            task = asyncio.create_task(
+                start_tcp_server(rt, km, host='127.0.0.1', port=7730,
+                                 client_keys=client_keys, start_event=started))
+            await started.wait()
+
+            async def do_handshake(client_sk, client_id, client_vk):
+                r, w = await asyncio.open_connection('127.0.0.1', 7730)
+                w.write((json.dumps({'hello':client_id,'vk':client_vk})+'\n').encode())
+                await w.drain()
+                challenge_resp = json.loads((await r.readline()).decode())
+                if 'challenge' not in challenge_resp:
+                    w.close(); await w.wait_closed()
+                    return challenge_resp
+                nonce = challenge_resp['challenge'].encode()
+                signed = client_sk.sign(nonce)
+                sig_b64 = base64.b64encode(signed.signature).decode()
+                w.write((json.dumps({'signature':sig_b64})+'\n').encode())
+                await w.drain()
+                result = json.loads((await r.readline()).decode())
+                w.close(); await w.wait_closed()
+                return result
+
+            # Known client — must succeed
+            resp = await do_handshake(sk, 'trusted-agent', vk_b64)
+            assert resp['ok'], f'known client must auth: {resp}'
+
+            # Unknown client — must be rejected
+            evil_sk = nacl.signing.SigningKey.generate()
+            evil_vk = base64.b64encode(bytes(evil_sk.verify_key)).decode()
+            resp2 = await do_handshake(evil_sk, 'evil-agent', evil_vk)
+            assert not resp2.get('ok'), f'unknown client must be rejected: {resp2}'
+
+            task.cancel()
+            try: await task
+            except asyncio.CancelledError: pass
+
+    asyncio.run(run())
+
+4.4 Stress Harness — 3 new sections
+# Section 20: Data-driven rule engine — injection via operator key
+# Section 21: TLS — plaintext client rejected at socket
+# Section 22: Per-client identity — unknown key rejected at challenge
+#
+# All three follow the run_isolated pattern established in sections 18-19.
+# Target after Week 11: 34/34
+
+1
+Run existing suite — 39 passed. Confirm before touching anything.
+2
+Add evaluate_rule to policy_store.py. Update _eval_policy_rules in runtime.py to use it. Remove AST/eval import entirely.
+3
+Migrate any existing string predicates in tests 14 and 15 to JSON format. If more than 3 tests need migration, abort and report.
+4
+Write Test 40 (rule engine). Run alone, then full suite — 40 passed.
+5
+Add ssl_context and start_event parameters to start_tcp_server. Add make_dev_ssl_context helper.
+6
+Write Test 41 (TLS). Run alone — needs openssl on PATH. Then full suite — 41 passed.
+7
+Add client_keys parameter and challenge-response handshake to _handle_client.
+8
+Write Test 42 (per-client identity). Run alone, then full suite — 42 passed, 0 warnings.
+9
+Add harness sections 20-22. Run — 34/34.
+
+Week 11 acceptance criteria:
+python3 -m pytest cc/tests/test_mvp.py -v  →  42 passed, 0 warnings
+python3 stress_harness.py                  →  34/34 — 0 deferred
+
+
+
+WEEK 12
+The Product Layer
+
+5. Week 12 Overview
+Week 11 closes the last security gaps. Week 12 makes Compatible Companion something a person can actually install and use. A CLI, a daemon, and a one-command onboarding flow. This is the layer that makes the ownership story real without reading source code.
+
+#
+Proof
+Acceptance criterion
+Files
+P1
+companion CLI
+A cc/cli.py module with an argparse entry point. Commands: init, store, find, export, import, status, policy seal. Each wraps the existing runtime API. Installable via pip as companion.
+cc/cli.py
+P2
+Daemon mode
+companion daemon start/stop. Runs start_tcp_server as a background process with PID file at ~/.compatible/daemon.pid. companion status shows whether daemon is running.
+cc/cli.py + cc/daemon.py
+P3
+One-command onboarding
+companion init creates ~/.compatible/, generates Ed25519 keypair, initializes the DB, seals the initial (empty) policy set, and prints the public key. One command. No manual steps.
+cc/cli.py
+
+
+6. W12-P1+P3 — companion CLI
+
+6.1 Command surface
+Command
+What it does
+companion init
+Create ~/.compatible/, generate keypair, init DB, seal empty policy set. Print public key. Idempotent — safe to run twice.
+companion store
+Store a memory unit. Args: --unit-id, --scope, --body (JSON string), --tags, --ttl.
+companion find
+Query units. Args: --scope. Prints JSON list to stdout.
+companion export
+Export signed capsule. Args: --output (path). Wraps compact_log + export_capsule.
+companion import
+Import a signed capsule. Args: --file (path). Rejects tampered capsules.
+companion status
+Print runtime health: policy_mode, sealed hash, receipt count, DB path.
+companion policy seal
+Operator command. Recompute and append POLICY_HASH receipt. Exits locked_down.
+companion daemon start
+Start TCP server as background daemon. Writes PID to ~/.compatible/daemon.pid.
+companion daemon stop
+Send SIGTERM to daemon PID. Remove PID file.
+
+6.2 cc/cli.py skeleton
+# cc/cli.py
+import argparse, json, os, sys
+from pathlib import Path
+
+DEFAULT_DIR  = Path.home() / '.compatible'
+DEFAULT_DB   = DEFAULT_DIR / 'companion.db'
+DEFAULT_LOG  = DEFAULT_DIR / 'receipts.jsonl'
+DEFAULT_KEY  = DEFAULT_DIR / 'identity.key'
+DEFAULT_PID  = DEFAULT_DIR / 'daemon.pid'
+
+def get_runtime():
+    from cc.runtime import AgentRuntime
+    return AgentRuntime(db_path=str(DEFAULT_DB),
+                        log_path=str(DEFAULT_LOG))
+
+def get_key_manager():
+    from cc.identity import KeyManager
+    return KeyManager(str(DEFAULT_KEY))
+
+def cmd_init(args):
+    DEFAULT_DIR.mkdir(exist_ok=True)
+    if not DEFAULT_KEY.exists():
+        from cc.identity import generate_keypair
+        sk, vk = generate_keypair(str(DEFAULT_KEY))
+        print(f'Identity created. Public key: {vk}')
+    else:
+        print('Identity already exists.')
+    rt = get_runtime()
+    from cc.policy_store import seal_policy
+    seal_policy(rt.policy_store, str(DEFAULT_LOG))
+    rt._recheck_policy_integrity()
+    print(f'Companion initialised at {DEFAULT_DIR}')
+    print(f'Policy sealed. Status: {rt.policy_mode}')
+
+def cmd_store(args):
+    rt = get_runtime()
+    body = json.loads(args.body)
+    result = rt.run_cycle(
+        plan={'action':'mem_store','unit_id':args.unit_id,
+              'scope':args.scope,'tags':args.tags or [],
+              'body':body,'ttl_expires_at':args.ttl},
+        act_fn=lambda p:{**p}, invariants=[])
+    print(json.dumps({'outcome': result}))
+
+def cmd_find(args):
+    rt = get_runtime()
+    units = rt.memory.mem_find(scope=args.scope)
+    print(json.dumps(units, indent=2))
+
+def cmd_export(args):
+    from cc.compact import compact_log
+    km = get_key_manager()
+    log_head = compact_log(
+        str(DEFAULT_DB), str(DEFAULT_LOG),
+        args.output, key_manager=km)
+    print(f'Exported to {args.output} (log_head: {log_head[:16]}...)')
+
+def cmd_import(args):
+    rt = get_runtime()
+    from cc.capsule import import_capsule
+    km = get_key_manager()
+    import_capsule(str(DEFAULT_DB), args.file, key_manager=km)
+    print(f'Imported {args.file}')
+
+def cmd_status(args):
+    rt = get_runtime()
+    import sqlite3
+    conn = sqlite3.connect(str(DEFAULT_DB))
+    receipt_count = sum(1 for _ in open(str(DEFAULT_LOG))) if DEFAULT_LOG.exists() else 0
+    print(json.dumps({
+        'policy_mode':    rt.policy_mode,
+        'integrity_ok':   rt.policy_mode == 'normal',
+        'warning':        rt.policy_integrity_warning,
+        'db_path':        str(DEFAULT_DB),
+        'receipt_count':  receipt_count,
+    }, indent=2))
+
+def cmd_policy_seal(args):
+    rt = get_runtime()
+    km = get_key_manager()
+    from cc.policy_store import seal_policy
+    h = seal_policy(rt.policy_store, str(DEFAULT_LOG), key_manager=km)
+    rt._recheck_policy_integrity()
+    print(f'Policy sealed. Hash: {h[:16]}... Mode: {rt.policy_mode}')
+
+def main():
+    parser = argparse.ArgumentParser(prog='companion')
+    sub = parser.add_subparsers(dest='command')
+
+    sub.add_parser('init')
+
+    p_store = sub.add_parser('store')
+    p_store.add_argument('--unit-id', required=True)
+    p_store.add_argument('--scope', default='core')
+    p_store.add_argument('--body', required=True, help='JSON string')
+    p_store.add_argument('--tags', nargs='*')
+    p_store.add_argument('--ttl')
+
+    p_find = sub.add_parser('find')
+    p_find.add_argument('--scope', default='core')
+
+    p_export = sub.add_parser('export')
+    p_export.add_argument('--output', required=True)
+
+    p_import = sub.add_parser('import')
+    p_import.add_argument('--file', required=True)
+
+    sub.add_parser('status')
+
+    p_policy = sub.add_parser('policy')
+    p_policy_sub = p_policy.add_subparsers(dest='policy_cmd')
+    p_policy_sub.add_parser('seal')
+
+    p_daemon = sub.add_parser('daemon')
+    p_daemon_sub = p_daemon.add_subparsers(dest='daemon_cmd')
+    p_daemon_sub.add_parser('start')
+    p_daemon_sub.add_parser('stop')
+
+    args = parser.parse_args()
+    dispatch = {
+        'init':   cmd_init,
+        'store':  cmd_store,
+        'find':   cmd_find,
+        'export': cmd_export,
+        'import': cmd_import,
+        'status': cmd_status,
+    }
+    if args.command in dispatch:
+        dispatch[args.command](args)
+    elif args.command == 'policy' and args.policy_cmd == 'seal':
+        cmd_policy_seal(args)
+    elif args.command == 'daemon':
+        from cc.daemon import daemon_start, daemon_stop
+        if args.daemon_cmd == 'start': daemon_start()
+        elif args.daemon_cmd == 'stop': daemon_stop()
+    else:
+        parser.print_help()
+
+if __name__ == '__main__':
+    main()
+
+
+7. W12-P2 — Daemon Mode
+
+7.1 cc/daemon.py
+# cc/daemon.py
+import os, sys, signal, asyncio
+from pathlib import Path
+
+PID_FILE = Path.home() / '.compatible' / 'daemon.pid'
+
+def daemon_start():
+    if PID_FILE.exists():
+        pid = int(PID_FILE.read_text().strip())
+        try:
+            os.kill(pid, 0)  # check alive
+            print(f'Daemon already running (pid {pid})')
+            return
+        except ProcessLookupError:
+            PID_FILE.unlink()  # stale PID
+
+    pid = os.fork()
+    if pid > 0:
+        # Parent — write PID and exit
+        PID_FILE.write_text(str(pid))
+        print(f'Daemon started (pid {pid})')
+        return
+
+    # Child — become daemon
+    os.setsid()
+    sys.stdin  = open(os.devnull)
+    sys.stdout = open(Path.home()/'.compatible'/'daemon.log', 'a')
+    sys.stderr = sys.stdout
+
+    from cc.cli import get_runtime, get_key_manager, DEFAULT_LOG
+    from cc.server import start_tcp_server
+    import json
+    token = os.environ.get('CC_TOKEN', 'changeme')
+    rt = get_runtime()
+    km = get_key_manager()
+    asyncio.run(start_tcp_server(rt, km, token=token))
+
+def daemon_stop():
+    if not PID_FILE.exists():
+        print('No daemon running.')
+        return
+    pid = int(PID_FILE.read_text().strip())
+    os.kill(pid, signal.SIGTERM)
+    PID_FILE.unlink()
+    print(f'Daemon stopped (pid {pid})')
+
+7.2 setup.py / pyproject.toml entry point
+# In pyproject.toml or setup.py
+[project.scripts]
+companion = 'cc.cli:main'
+
+# After pip install -e .:
+# $ companion init
+# $ companion store --unit-id u1 --body '{"summary": "hello"}'
+# $ companion find
+# $ companion daemon start
+# $ companion status
+
+
+8. W12 Acceptance Tests
+
+Test 43 — companion init is idempotent
+def test_43_companion_init():
+    """companion init creates identity, DB, and seals policy.
+    Running it twice does not corrupt state.
+    """
+    import tempfile, os
+    from unittest.mock import patch
+    from cc import cli
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp) / '.compatible'
+        with patch.object(cli, 'DEFAULT_DIR',  tmp_dir), \
+             patch.object(cli, 'DEFAULT_DB',   tmp_dir/'companion.db'), \
+             patch.object(cli, 'DEFAULT_LOG',  tmp_dir/'receipts.jsonl'), \
+             patch.object(cli, 'DEFAULT_KEY',  tmp_dir/'identity.key'):
+
+            import argparse
+            args = argparse.Namespace()
+            cli.cmd_init(args)
+            assert (tmp_dir/'identity.key').exists(), 'key must exist'
+            assert (tmp_dir/'companion.db').exists(), 'db must exist'
+            assert (tmp_dir/'receipts.jsonl').exists(), 'log must exist'
+
+            rt = cli.get_runtime()
+            assert rt.policy_mode == 'normal', \
+                f'policy must be sealed after init: {rt.policy_mode}'
+
+            # Second init — must not corrupt
+            cli.cmd_init(args)
+            rt2 = cli.get_runtime()
+            assert rt2.policy_mode == 'normal', \
+                f'second init must not break policy: {rt2.policy_mode}'
+
+Test 44 — CLI store and find roundtrip
+def test_44_cli_store_find():
+    """companion store commits a unit. companion find returns it."""
+    import tempfile, argparse, json
+    from unittest.mock import patch
+    from cc import cli
+    from pathlib import Path
+    import io, sys
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp) / '.compatible'
+        with patch.object(cli, 'DEFAULT_DIR',  tmp_dir), \
+             patch.object(cli, 'DEFAULT_DB',   tmp_dir/'companion.db'), \
+             patch.object(cli, 'DEFAULT_LOG',  tmp_dir/'receipts.jsonl'), \
+             patch.object(cli, 'DEFAULT_KEY',  tmp_dir/'identity.key'):
+
+            cli.cmd_init(argparse.Namespace())
+
+            store_args = argparse.Namespace(
+                unit_id='cli_u1', scope='core',
+                body='{"summary": "from cli"}',
+                tags=[], ttl=None)
+            cli.cmd_store(store_args)
+
+            captured = io.StringIO()
+            sys.stdout = captured
+            cli.cmd_find(argparse.Namespace(scope='core'))
+            sys.stdout = sys.__stdout__
+
+            units = json.loads(captured.getvalue())
+            ids = [u.get('unit_id') for u in units]
+            assert 'cli_u1' in ids, f'stored unit must be findable: {ids}'
+
+Test 45 — companion status reflects policy mode
+def test_45_cli_status():
+    """companion status returns policy_mode and integrity_ok."""
+    import tempfile, argparse, json, io, sys, sqlite3
+    from unittest.mock import patch
+    from cc import cli
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp) / '.compatible'
+        with patch.object(cli, 'DEFAULT_DIR',  tmp_dir), \
+             patch.object(cli, 'DEFAULT_DB',   tmp_dir/'companion.db'), \
+             patch.object(cli, 'DEFAULT_LOG',  tmp_dir/'receipts.jsonl'), \
+             patch.object(cli, 'DEFAULT_KEY',  tmp_dir/'identity.key'):
+
+            cli.cmd_init(argparse.Namespace())
+
+            # Normal status
+            captured = io.StringIO()
+            sys.stdout = captured
+            cli.cmd_status(argparse.Namespace())
+            sys.stdout = sys.__stdout__
+            status = json.loads(captured.getvalue())
+            assert status['policy_mode'] == 'normal'
+            assert status['integrity_ok'] is True
+
+Stress Harness — 1 new section
+# Section 23: CLI init → store → find roundtrip via subprocess
+# Runs companion as a real process to verify the entry point works
+# Target after Week 12: 35/35
+
+1
+Run existing suite — 42 passed after Week 11. Confirm before touching anything.
+2
+Create cc/cli.py with all commands. Create cc/daemon.py with daemon_start/daemon_stop.
+3
+Add entry point to pyproject.toml. Run pip install -e . Confirm companion --help works.
+4
+Write Test 43 (init). Run alone. Confirm pass.
+5
+Write Test 44 (store/find). Run alone. Confirm pass.
+6
+Write Test 45 (status). Run alone. Confirm pass. Run full suite — 45 passed.
+7
+Add harness section 23. Run — 35/35.
+
+Week 12 acceptance criteria:
+python3 -m pytest cc/tests/test_mvp.py -v  →  45 passed, 0 warnings
+python3 stress_harness.py                  →  35/35 — 0 deferred
+companion --help                            →  prints command list
+companion init                              →  creates ~/.compatible/ cleanly
+
+
+9. What Comes After
+Week 11 closes the last known security gaps. Week 12 makes it usable. After both land clean, Compatible Companion is a deployable, installable, auditable agent memory system.
+
+What the critiques will run out of after Week 12:
+
+Security: eval gone, TLS live, per-client identity, policy hash-bound, canon immutable.
+Concurrency: singleton runtime, WAL, async adapter, session isolation.
+Reliability: atomic snapshots, deterministic replay, receipt chain, tamper detection.
+Usability: CLI, daemon, one-command onboarding, policy_status diagnostics.
+
+What remains is product decisions — not engineering gaps.
+At that point, the name is the most subjective thing left.
+
+
+Week 11 closes the gaps. Week 12 opens the door.

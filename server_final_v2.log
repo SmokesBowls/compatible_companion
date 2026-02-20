@@ -1,0 +1,26 @@
+INFO:     Will watch for changes in these directories: ['/home/burdens/compatible']
+INFO:     Uvicorn running on http://127.0.0.1:7078 (Press CTRL+C to quit)
+INFO:     Started reloader process [3181183] using StatReload
+INFO:     Started server process [3181192]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     127.0.0.1:47640 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48976 - "GET /api/llm/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48984 - "POST /api/llm/config HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48996 - "GET /api/llm/status HTTP/1.1" 200 OK
+WARNING:  StatReload detected changes in 'cc/config.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [3181192]
+INFO:     Started server process [3181454]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+WARNING:  StatReload detected changes in 'cc/api.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [3181454]
+INFO:     Started server process [3181461]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.

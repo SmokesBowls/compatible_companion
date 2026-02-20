@@ -1,0 +1,17 @@
+INFO:     Will watch for changes in these directories: ['/home/burdens/compatible']
+INFO:     Uvicorn running on http://127.0.0.1:7078 (Press CTRL+C to quit)
+INFO:     Started reloader process [3178094] using StatReload
+INFO:     Started server process [3178102]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     127.0.0.1:60530 - "GET /api/llm/status HTTP/1.1" 200 OK
+[LOG] Appended rcpt_b9bef8ea | Log Head: 331dec4963aa...
+INFO:     127.0.0.1:60542 - "POST /api/ingest HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52620 - "GET /api/llm/status HTTP/1.1" 200 OK
+[LOG] Appended rcpt_f2e22d11 | Log Head: 5cef41f2bd69...
+INFO:     127.0.0.1:52632 - "POST /api/ingest HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49098 - "GET /health HTTP/1.1" 200 OK
+[LOG] Appended rcpt_0d31c36d | Log Head: d193638625f0...
+INFO:     127.0.0.1:34200 - "POST /api/ingest HTTP/1.1" 200 OK
+[LOG] Appended rcpt_00ba74fd | Log Head: 6a6b4805dfcd...
+INFO:     127.0.0.1:40624 - "POST /api/ingest HTTP/1.1" 200 OK
