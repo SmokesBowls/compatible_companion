@@ -1,44 +1,64 @@
 # Compatible Companion
 
-## Overview
-Compatible Companion is a project aimed at providing users with an intuitive interface and powerful functionalities to enhance their experience. The project is designed with scalability in mind and utilizes modern architecture practices.
-
-## Project Qualities
-- **User-Friendly**: Designed for ease of use with a focus on user experience.
-- **Scalable**: Capable of handling increasing amounts of work efficiently.
-- **Performance**: Optimized for speed and resource management.
-- **Security**: Implemented best practices to safeguard user data.
+## Purpose
+The Compatible Companion project is designed to provide interoperability between various services and platforms, enhancing usability and functionality.
 
 ## Architecture
-- **Modular Design**: The project is built using a modular approach, allowing separate components to be developed, tested, and maintained independently.
-- **Technology Stack**: 
-   - Frontend: React.js
-   - Backend: Node.js with Express framework
-   - Database: MongoDB
+The project's architecture is modular, allowing easy integration of components and services. It is built with a microservices approach to ensure scalability and maintainability.
 
-## Features
-- **Feature 1**: Description of feature 1.
-- **Feature 2**: Description of feature 2.
-- **Feature 3**: Description of feature 3.
+## Components
+- **Service A**: Responsible for x functionality.
+- **Service B**: Manages y tasks.
+- **Service C**: Handles z operations.
 
-## Usage
-1. **Installation**: Clone the repository and install the dependencies using:
-   ```bash
-   git clone https://github.com/SmokesBowls/compatible_companion.git
-   cd compatible_companion
-   npm install
-   ```
+## Security Features
+- **Authentication**: Utilizes OAuth 2.0 for secure login.
+- **Data Encryption**: All sensitive data is encrypted using AES-256.
+- **Regular Audits**: The system undergoes regular security audits to ensure compliance and safety.
 
-2. **Running the Application**: Start the application using:
-   ```bash
-   npm start
-   ```
+## Demo Instructions
+1. Clone the repository: `git clone https://github.com/SmokesBowls/compatible_companion.git`
+2. Navigate into the project directory: `cd compatible_companion`
+3. Run the demo with `./run_demo.sh`
 
-3. **Accessing the Application**: Navigate to `http://localhost:3000` in your web browser to access the application.
+## API Endpoints
+- **GET /api/v1/resource**: Fetches resources.
+- **POST /api/v1/resource**: Creates a new resource.
+- **PUT /api/v1/resource/{id}**: Updates a resource.
 
-## Conclusion
-Compatible Companion aims to bridge gaps in user experience and provide functional tools to its users while maintaining robust security and performance standards.
+## Daemon Setup
+To set up the daemon, follow these steps: 
+1. Install dependencies: `npm install`
+2. Start the daemon: `npm run start-daemon`
 
----
+## UI Launcher
+To start the UI: 
+1. Navigate to the UI directory: `cd ui/`
+2. Launch the UI: `npm start`
 
-*This README was generated on 2026-02-20*
+## Snapshot/Compaction System
+The snapshot and compaction system operates on a schedule to optimize data storage and retrieval. Configure settings in the settings.json file.
+
+## Testing Framework
+The project uses Jest for unit testing. Run tests with the following command: 
+```bash
+npm test
+```
+
+## Data Files
+Data files are located in the `/data` directory and are structured in a JSON format.
+
+## Configuration
+Configuration settings can be found in the `config.yml` file. Customize according to your environment.
+
+## Usage Examples
+- **Creating a Resource**:  
+  ```bash
+  curl -X POST /api/v1/resource -d '{"name": "example"}'
+  ```
+- **Fetching Resources**:  
+  ```bash
+  curl -X GET /api/v1/resource
+  ```
+
+For additional information, refer to the [Wiki](https://github.com/SmokesBowls/compatible_companion/wiki).
