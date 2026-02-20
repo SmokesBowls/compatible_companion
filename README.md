@@ -1,64 +1,57 @@
-# Compatible Companion
+# Compatible Companion Project Documentation
 
 ## Purpose
-The Compatible Companion project is designed to provide interoperability between various services and platforms, enhancing usability and functionality.
+The Compatible Companion project aims to provide a reliable and efficient system for managing and facilitating interactions between various components of a digital ecosystem.
 
 ## Architecture
-The project's architecture is modular, allowing easy integration of components and services. It is built with a microservices approach to ensure scalability and maintainability.
+The architecture of the Compatible Companion is designed to be modular, allowing for flexibility and adaptability in various environments. 
 
-## Components
-- **Service A**: Responsible for x functionality.
-- **Service B**: Manages y tasks.
-- **Service C**: Handles z operations.
+## Core Components
+### Memory System
+Responsible for managing the data storage and retrieval processes to ensure seamless access to information.
+
+### Runtime
+The core engine that drives the application logic and processes user interactions.
+
+### Identity & Signing
+Ensures secure identity verification and signing of transactions to maintain data integrity and prevent unauthorized access.
+
+### Receipts
+Facilitate tracking and validation of processes within the system, ensuring accountability and transparency.
+
+## How It Works with the Demo Example
+The demo example provided showcases the functionality of the Compatible Companion, demonstrating how users can interact with the system to access features and components effectively.
 
 ## Security Features
-- **Authentication**: Utilizes OAuth 2.0 for secure login.
-- **Data Encryption**: All sensitive data is encrypted using AES-256.
-- **Regular Audits**: The system undergoes regular security audits to ensure compliance and safety.
+The project incorporates various security features, including encryption, access control, and secure communication protocols to safeguard user data.
 
-## Demo Instructions
-1. Clone the repository: `git clone https://github.com/SmokesBowls/compatible_companion.git`
-2. Navigate into the project directory: `cd compatible_companion`
-3. Run the demo with `./run_demo.sh`
+## Network and APIs
+### Daemon
+The daemon component acts as a background service that handles requests and manages the communication between different components of the system.
 
-## API Endpoints
-- **GET /api/v1/resource**: Fetches resources.
-- **POST /api/v1/resource**: Creates a new resource.
-- **PUT /api/v1/resource/{id}**: Updates a resource.
+### FastAPI
+FastAPI is utilized for building the API endpoints, providing a responsive and scalable interface for users.
 
-## Daemon Setup
-To set up the daemon, follow these steps: 
-1. Install dependencies: `npm install`
-2. Start the daemon: `npm run start-daemon`
+### MCP Adapter
+The MCP Adapter serves as a bridge between different modules, ensuring compatibility and easy integration.
 
-## UI Launcher
-To start the UI: 
-1. Navigate to the UI directory: `cd ui/`
-2. Launch the UI: `npm start`
-
-## Snapshot/Compaction System
-The snapshot and compaction system operates on a schedule to optimize data storage and retrieval. Configure settings in the settings.json file.
+## Snapshots and Compaction
+The system supports snapshots and data compaction to optimize performance and manage storage efficiently.
 
 ## Testing Framework
-The project uses Jest for unit testing. Run tests with the following command: 
-```bash
-npm test
-```
+The project harnesses a robust testing framework to ensure high-quality deliverables and functionality verification.
+
+## Getting Started Instructions
+Follow the instructions outlined in the README to set up the environment and start using the Compatible Companion.
 
 ## Data Files
-Data files are located in the `/data` directory and are structured in a JSON format.
+All necessary data files are included in the repository, ensuring easy access and integration for users.
 
 ## Configuration
-Configuration settings can be found in the `config.yml` file. Customize according to your environment.
+Users can configure various aspects of the project to fit their specific needs through well-documented configuration options.
 
-## Usage Examples
-- **Creating a Resource**:  
-  ```bash
-  curl -X POST /api/v1/resource -d '{"name": "example"}'
-  ```
-- **Fetching Resources**:  
-  ```bash
-  curl -X GET /api/v1/resource
-  ```
+## Use Cases
+Explore various use cases that illustrate the practical applications of the Compatible Companion in different scenarios.
 
-For additional information, refer to the [Wiki](https://github.com/SmokesBowls/compatible_companion/wiki).
+## Project Structure
+The project is structured to facilitate easy navigation and development, with clear separation of components and modules.
